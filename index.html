@@ -192,6 +192,104 @@
     display: none;
   }
   body.scene-control .control-panel { display: block; }
+  /* 密码输入场景：同属场景层（背景 / 顶栏 / 选择图片都在），中间先留空。
+     pointer-events:none 与控制中心同理 —— 免得吃掉 pointerdown 让顶栏按钮拖不动。 */
+  .passwd-panel {
+    position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+    display: none;
+    pointer-events: none;
+  }
+  body.scene-passwd .passwd-panel { display: block; }
+  /* 玻璃对话框场景：与控制中心 / 密码输入同属场景层（背景 / 顶栏 / 选择图片都在），
+     中间先留空，内容后续往 #dialogPanel 里填。
+     pointer-events:none 同理 —— 免得吃掉 pointerdown 让顶栏按钮拖不动。 */
+  .dialog-panel {
+    position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+    display: none;
+    pointer-events: none;
+  }
+  body.scene-dialog .dialog-panel { display: block; }
+  /* 密码键的文字层：与玻璃严格同尺寸的透明盒，只画数字 + 字母。
+     盒子位置尺寸由 JS 按 PW_ITEMS 写成与玻璃重合，每帧由 syncLabels 写
+     transform 跟随果冻形变（与控制中心图标同一套机制）。
+     pointer-events:none —— 手势必须落到 canvas 的玻璃上，不能让文字盒吃掉。 */
+  .pw-ico {
+    position: absolute;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    pointer-events: none; user-select: none; -webkit-user-select: none;
+    color: #fff;
+    box-sizing: border-box;
+    will-change: transform;
+  }
+  /* 白色字压在毛玻璃上遇到亮背景会糊：用 text-shadow 拉开对比。
+     刻意不用 filter: drop-shadow() —— 父元素每帧改 transform 时滤镜要重算，
+     10 个键叠起来是白给的一笔开销；text-shadow 只走一次文本栅格化。 */
+  .pw-digit {
+    font: 300 33px/1 -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: 0.5px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.42);
+  }
+  .pw-letters {
+    margin-top: 3px;
+    font: 600 9.5px/1 -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: 1.7px;
+    opacity: 0.82;
+    text-shadow: 0 1px 1.5px rgba(0,0,0,0.40);
+  }
+  /* ===== 玻璃对话框场景的文字层 =====
+     与密码键同一套做法：盒子由 JS 按 DLG_* 写成与玻璃严格重合，
+     每帧由 syncLabels 写 transform 跟随果冻形变；pointer-events:none
+     —— 手势必须落到 canvas 的玻璃上。
+     对话框主体染色偏浅，所以文字用深色（与 .label-dark 同理）。 */
+  .dlg-box {
+    position: absolute;
+    display: flex; flex-direction: column;
+    box-sizing: border-box;
+    padding: 34px 26px 26px;
+    pointer-events: none; user-select: none; -webkit-user-select: none;
+    will-change: transform;
+  }
+  .dlg-title {
+    flex: none;
+    font: 700 19px/1.25 -apple-system, "SF Pro Display", "PingFang SC",
+          "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #17273d;
+    letter-spacing: 0.4px;
+    /* 浅色玻璃上白字会糊，深色字则要在遇到玻璃最亮处时仍能读出 ——
+       加一层极淡的白色描边把字从背景里托起来。 */
+    text-shadow: 0 1px 1px rgba(255,255,255,0.45);
+  }
+  .dlg-text {
+    flex: none;
+    margin-top: 13px;
+    font: 400 13px/1.75 -apple-system, "SF Pro Text", "PingFang SC",
+          "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #3d5470;
+    text-shadow: 0 1px 1px rgba(255,255,255,0.38);
+  }
+  /* 两个按钮的文字盒：与各自那块玻璃严格同尺寸，文字居中。 */
+  .dlg-btn {
+    position: absolute;
+    display: flex; align-items: center; justify-content: center;
+    box-sizing: border-box;
+    pointer-events: none; user-select: none; -webkit-user-select: none;
+    will-change: transform;
+  }
+  .dlg-btn-cancel {
+    font: 500 15px/1 -apple-system, "SF Pro Text", "PingFang SC",
+          "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #24405f;
+    letter-spacing: 0.6px;
+    text-shadow: 0 1px 1px rgba(255,255,255,0.42);
+  }
+  .dlg-btn-ok {
+    font: 600 15px/1 -apple-system, "SF Pro Text", "PingFang SC",
+          "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #fff;
+    letter-spacing: 0.6px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.34);
+  }
   /* 单个图标盒：位置尺寸由 JS 按 CC_ITEMS 写成与玻璃严格重合，
      每帧再由 syncLabels 写 transform（跟随果冻形变）。 */
   .cc-ico {
@@ -619,6 +717,8 @@
       <button class="menu-item" id="menuSliderItem" type="button">玻璃滑块</button>
       <button class="menu-item" id="menuTabbarItem" type="button">标签栏</button>
       <button class="menu-item" id="menuControlItem" type="button">控制中心</button>
+      <button class="menu-item" id="menuPasswdItem" type="button">密码输入</button>
+      <button class="menu-item" id="menuDialogItem" type="button">玻璃对话框</button>
 
     </div>
     <!-- 主页玻璃层：canvas 画材质、DOM 按钮画图标（顺序不能反，图标要在上面） -->
@@ -667,6 +767,10 @@
         <!-- 控制中心场景：同样共用背景 / 顶栏 / 选择图片，
              中间是一整屏 iOS 控制中心（全部为玻璃），DOM 只画玻璃之上的图标 -->
         <div class="control-panel" id="controlPanel" aria-hidden="true"></div>
+        <!-- 密码输入场景：同样共用背景 / 顶栏 / 选择图片，中间先留空，内容后续再填 -->
+        <div class="passwd-panel" id="passwdPanel" aria-hidden="true"></div>
+        <!-- 玻璃对话框场景：同样共用背景 / 顶栏 / 选择图片，中间先留空，内容后续再填 -->
+        <div class="dialog-panel" id="dialogPanel" aria-hidden="true"></div>
         <!-- 标签栏场景：同样共用背景 / 顶栏 / 选择图片，中间是 iOS 26 风格的底部标签栏 -->
         <div class="tabbar-panel" id="tabbarPanel" aria-hidden="true">
           <div class="tbar" id="tbarEl">
@@ -1584,6 +1688,11 @@ function makeGlass(id, name, xCss, yCss, wCss, hCss, tint, rim, textLight, blurC
     // 与形变 jAmt 分开：形变是"被拽变形"，浮起是"被按/拖时整块抬起来"。
     // 松开时走欠阻尼弹簧 → 沉过头一点点再坐回来，就是 iOS 那种连贯的"沉下去"。
     lift: 0, liftV: 0, liftHeld: false,
+    /* ---- 按下缩放（press）：仅密码键使用 ----
+       与 lift 的区别：lift 是「浮起」（带投影张开 + 下移），press 是纯等比放大，
+       不带投影、不带位移。两者共用同一根弹簧的常量，只是目标值与视觉附件不同。
+       非密码键这三个字段恒为 0，stepGlass 里由短路条件跳过，不产生任何开销。 */
+    press: 0, pressV: 0, pressHeld: false,
   };
 }
 
@@ -1861,6 +1970,119 @@ const ccSheet = (() => {
    「选择图片」那块被压住时不会误抓控制中心的小玻璃。 */
 glasses.forEach(g => { if (g.mode === 'control') g.draggable = false; });
 
+/* ================= 密码输入：3×4 数字键盘 =================
+   照参考图（iOS 锁屏键盘）的排布：1~9 占三行三列，0 独占第四行中间一格，
+   左右两格空着。2~9 的键面在数字下方带一行字母（ABC / DEF / … / WXYZ），
+   1 与 0 没有字母 —— 与图内一致。
+   全部是**真玻璃**（canvas 渲染材质），DOM 只画键面上的数字与字母，
+   与中心那 19 块控制中心玻璃同一套机制（盒子重合 + syncLabels 跟随形变）。
+   索引从 PW_BASE = glasses.length（= 28）开始：中心 19 块占 9~27，
+   前面 0~8（按钮 / 顶栏 / 选择图片 / 标签栏）一个都不动，
+   CC_BASE 与 ccIconEls[9..27] 的绑定完全不受影响。 */
+const PW_D      = 78;                                   // 键直径（CSS px）
+const PW_COL_X  = [73, 195, 317];                       // 3 列中心（间距 122，左右各留 34）
+/* 4 行中心（间距 98）—— 整体垂直居中：
+     键区上沿 = 275 − 78/2 = 236，下沿 = 569 + 78/2 = 608，
+     中线 (236+608)/2 = 422 = 屏幕高 844 / 2。
+   （原值 380/478/576/674 的中线在 527，比屏幕中线低 105，
+     所以整体减 105 得到现在这一组。） */
+const PW_ROW_Y  = [275, 373, 471, 569];
+/* 键面字母：只给 2~9，1 与 0 为空串（参考图里这两键也没有字母）。 */
+const PW_LETTERS = { '1':'', '2':'ABC', '3':'DEF', '4':'GHI', '5':'JKL',
+                     '6':'MNO', '7':'PQRS', '8':'TUV', '9':'WXYZ', '0':'' };
+/* [数字, 列中心, 行中心] —— 顺序即 glasses 里的顺序，也是 iconEls 的顺序。 */
+const PW_ITEMS = [];
+for (let k = 0; k < 9; k++) PW_ITEMS.push(['' + (k + 1), PW_COL_X[k % 3], PW_ROW_Y[(k / 3) | 0]]);
+PW_ITEMS.push(['0', PW_COL_X[1], PW_ROW_Y[3]]);
+
+const PW_BASE   = glasses.length;                       // = 28
+/* 键面白色染色强度（%）—— 这是键面上"那层白雾"的唯一来源：
+     applyTint 在 mix 模式下做 mix(col, 白, strength/100)，
+     把背景按该比例拉向纯白，暗部被抬亮得最厉害 → 看起来发白、不通透。
+     26 时暗背景(0.10)被抬到 0.334（亮 3.3 倍）；降到 10 后只到 0.19。
+     再往下调就更透；置 0 则完全无染色，只剩折射 + 边缘高光。 */
+const PW_TINT   = { color: '#ffffff', strength: 10 };
+/* 毛玻璃半径（CSS px）= 0 —— 键面玻璃**不做模糊**，只保留染色 + 折射。
+     0 会让 setGlassUniforms 直接取未模糊的原纹理（getBgTextureForBlur 里
+     b<=0 即 return texture），blurRadius 也随之置 0，
+     且 refreshBlurTextures 不会为它建模糊档位 → 反而省掉一张全屏模糊纹理。 */
+const PW_BLUR   = 0;
+/* 按下反馈：密码键**不用** JELLY_PRESS 那套「沿轴挤压 + 垂直轴拉伸」——
+   那本质是形变，看着就是按一下抖一下（用户反馈的「跳动」）。
+   这里改成**等比放大**：整块玻璃自相似变大，圆角同步 ×同一倍率
+   （borderRadius 也乘 pressS，正圆放大后还是正圆），没有任何形状扭曲。
+   回弹走的是浮起 lift 那根弹簧的同一套常量（LIFT_K / LIFT_C_HELD /
+   LIFT_C_FREE），松开时 ζ=0.45 欠阻尼 → 缩过头一点点再坐回来。 */
+const PW_PRESS_SCALE = 0.16;   // 按下放大 16%（78 → 90.5，行间距 98 仍留 7.5 不撞）
+/* 按下/回弹的**速度**：press 弹簧刚度的倍率（只作用于密码键，其他玻璃不经过这条路径）。
+     弹簧 ω = √(K)，K 乘 mul → ω 乘 √mul，周期因此拉长 1/√mul 倍。
+     阻尼同步乘 √mul：ζ = c / (2√K)，这样「变慢/变快」只改时间尺度，
+     ζ 保持 0.80（按住）/ 0.36（松开）不变 —— 否则弹簧变软而阻尼不变会让 ζ 变大，
+     回弹被吃掉，只剩一个软塌塌的慢动作。
+     分相：按住（变大）和松开（缩回）用各自的倍率，互不影响。 */
+const PW_PRESS_K_MUL       = 0.30;  // 松开（缩回）：慢 —— 0.72s 停稳 + 4.45% 回弹（保持不变）
+const PW_PRESS_K_MUL_HELD  = 1.00;  // 按住（变大）：快 —— 回到放慢前的 0.20s 跟手速度
+                                    // 1.00 = 直接用原果冻刚度 JELLY_K（ω≈28.6，周期 0.22s）
+/* 按下时**光更亮**：只加在密码键的 glowGain 上，按 press（0→1）线性抬起。
+   press=0 时与全局 GLOW_GAIN 逐值相同 —— 不按的时候、其他页面/其他玻璃
+   一点没变。取 max(0, press) 是因为松开过冲时 press 会到 -0.28，
+   不夹的话回弹瞬间光反而变暗，看着像闪一下。 */
+const PW_GLOW_PRESS_ADD = 0.30;   // 按住满值时 glowGain 0.20 → 0.50（内透光约 2.5×）
+/* 按下时**光铺得更开**：只加在密码键的 glowRadius 上，按 press 线性放大半径。
+     光晕形状 shape = 1 − smoothstep(0.35, 1.0, d/半径)，半径越大，同一个
+     片元算出来的归一化距离越小 → 亮区往键的边缘推，看起来就是"范围更大"。
+     键是正圆（半边长 = 半径 R），原半径 = 1.30R：
+       键边缘处 t = 1/1.30 = 0.769 → shape 0.288（只有中心的三成，光缩在中间一小团）
+       ×1.45 后 t = 0.530      → shape 0.812（几乎铺满整键，像整键发光）
+     同样取 max(0, press)：松开过冲 press<0 时半径不缩，回弹那下光不会突然收一下。 */
+const PW_GLOW_R_PRESS_ADD = 0.45; // 按住满值时光斑半径 ×1.45（50.7 → 73.5 设备像素）
+PW_ITEMS.forEach((it, k) => {
+  /* 正圆：borderRadius = min(w,h)/2（makeGlass 默认值），不用另行指定。
+     折射沿用 REFRACT = 80 / edgeWidth 0.32 / edgeBend 2.0 —— 与「按钮场景」
+     那四块完全一致，不单独调参，免得十个键的材质跟别处不是同一种玻璃。 */
+  const g = makeGlass(300 + k, '', it[1], it[2], PW_D, PW_D, PW_TINT, 0.55, true, PW_BLUR);
+  g.mode = 'passwd';    // 只在密码输入场景出现，其余场景 hidden
+  g.hidden = true;
+  g.pwKey = it[0];      // 键面数字（后续做输入逻辑时用）
+  glasses.push(g);
+});
+
+/* ================= 玻璃对话框场景的玻璃 =================
+   三块：对话框主体（大圆角矩形）+ 底部两个按钮（取消 / 确定）。
+   材质沿用按钮场景那套常量（REFRACT 80 / edgeWidth 0.32 / edgeBend 2.0，
+   blur 6 —— 与 glasses[2..4][7..9] 同一个模糊档位，不会多建一张模糊纹理），
+   不单独调参，免得这几块跟别处不是同一种玻璃。 */
+const DLG_W = 318, DLG_H = 240;          // 主体（左右各留 36）
+const DLG_X = 195, DLG_Y = 420;          // 中心：垂直居中略上（844/2 = 422）
+const DLG_R = 56;                        // 圆角（makeGlass 默认 min(w,h)/2 太大，必须覆盖）
+const DLG_BTN_W = 124, DLG_BTN_H = 46;   // 按钮（高 46 → 圆角 23 = 半高，胶囊）
+const DLG_BTN_Y = 486;                   // 按钮行中心：下沿 509，距主体底 540 留 31
+const DLG_BTN_X = [117, 273];            // 取消 / 确定（间距 32，两侧各留 19）
+/* 三块玻璃的顺序即渲染顺序：主体先画，两个按钮叠在上面。
+   DLG_BASE = glasses.length（= 38）：密码键占 28~37，
+   前面 0~8 与 9~27 一个都不动，CC_BASE / PW_BASE 的绑定完全不受影响。 */
+const DLG_BASE = glasses.length;
+/* [x, y, w, h, 圆角, 染色, rim, 文字用浅色] */
+const DLG_ITEMS = [
+  [DLG_X, DLG_Y,      DLG_W, DLG_H,     DLG_R, { color: '#ffffff', strength: 55 }, 0.55, false],
+  [DLG_BTN_X[0], DLG_BTN_Y, DLG_BTN_W, DLG_BTN_H, 0, { color: '#ffffff', strength: 20 }, 0.50, false],
+  [DLG_BTN_X[1], DLG_BTN_Y, DLG_BTN_W, DLG_BTN_H, 0, { color: '#2563eb', strength: 62 }, 0.45, true ],
+];
+DLG_ITEMS.forEach((it, k) => {
+  const g = makeGlass(400 + k, '', it[0], it[1], it[2], it[3], it[5], it[6], it[7], 6);
+  g.mode = 'dialog';      // 只在玻璃对话框场景出现，其余场景 hidden
+  g.hidden = true;
+  /* 主体（k===0）不参与拖拽命中：hitGlass 与 otherGlassAt 都跳过
+     draggable=false 的玻璃（与控制中心那 19 块小玻璃完全同一套做法），
+     于是按在主体上拖动 = 滚背景，只有下面「取消 / 确定」两个按钮能拽出果冻。
+     其余场景的玻璃一个都不碰 —— 这里只改 DLG_BASE 起的这三块。 */
+  if (k === 0) g.draggable = false;
+  /* 圆角为 0 表示用默认胶囊（半高）；否则按给定值覆盖。
+     注意单位是设备像素 —— makeGlass 里 width/height 已乘过 SCALE。 */
+  if (it[4] > 0) g.borderRadius = it[4] * SCALE;
+  glasses.push(g);
+});
+
 // 控制中心场景是否生效（只有这个场景才有 ccSheet）
 function ccSheetOn() { return sceneMode === 'control'; }
 
@@ -1884,6 +2106,7 @@ function resetCcSheet() {
   g._ox = 0; g._oy = 0; g.vx = 0; g.vy = 0; g.jHeld = false;
   g.jOx = 0; g.jOy = 0;                 // 展开/收起那份漂移也要清
   g.lift = 0; g.liftV = 0; g.liftHeld = false;
+  g.press = 0; g.pressV = 0; g.pressHeld = false;
   g.glowAmt = 0; g.glowAmtS = 0;
   g.x = g.homeX; g.y = g.homeY;
   /* 拖到一半就退出：全局 dragging 还指着 ccSheet，不清的话
@@ -2076,7 +2299,12 @@ const swThumbs = SW_Y.map(() => ({ lift: 0, liftV: 0, liftHeld: false, mustRise:
                                       滑过去的，那段位移同样会产生速度 → 拉伸。这里用它把速度采样和
                                       jelT 门控起来：不拖动就恒为 0，点击时不再拉伸；松手后 jel 交给
                                       弹簧自然收回（ζ=0.45），这才是「拖动才有的拉伸 + 回弹」。 */
-                                   dragActive: false }));
+                                   dragActive: false,
+                                   /* 本帧滑块玻璃的实际包围盒（手机 CSS px）+ 可见度。
+                                      由 thumbStep 在画之前写入，只用于「按在浮起的玻璃上
+                                      不该滚背景」这一处命中判断（见 thumbGlassBlocksBg）。
+                                      纯缓存：不写它玻璃照常画，写了也不参与任何渲染。 */
+                                   _gx: 0, _gy: 0, _gw: 0, _gh: 0, _gvis: 0 }));
 
 let selectedGlassId = 1;
 Object.defineProperty(window, 'params', { get: () => glasses.find(g => g.id === selectedGlassId) });
@@ -2234,8 +2462,13 @@ function setGlassUniforms(glass) {
   // 直接乘在 glassSize / borderRadius 上，不用改 shader：
   // SDF 的圆角矩形本来就是这两个量定义的，等比缩放后形状完全自相似。
   const liftS = 1 + (glass.lift || 0) * LIFT_SCALE;
-  u.glassSize.value.set(glass.width * bgScale * liftS, glass.height * bgScale * liftS);
-  u.borderRadius.value = glass.borderRadius * bgScale * liftS;
+  /* 按下缩放（仅密码键）：与浮起同一路 —— 尺寸和圆角乘**同一个**倍率，
+     形状严格自相似。圆角不同步的话，正圆键放大后会变成圆角方形
+     （半径不变而半宽变大了），一眼就能看出来。 */
+  const pressS = 1 + (glass.press || 0) * PW_PRESS_SCALE;
+  const growS = liftS * pressS;
+  u.glassSize.value.set(glass.width * bgScale * growS, glass.height * bgScale * growS);
+  u.borderRadius.value = glass.borderRadius * bgScale * growS;
   u.refractStrength.value = glass.refractStrength;
   u.dispersion.value = glass.dispersion;
   u.edgeWidth.value = glass.edgeWidth;
@@ -2301,12 +2534,19 @@ function setGlassUniforms(glass) {
   // 再叠加一个等效尺寸的上限，避免极小按钮上光斑大得离谱。
   // 允许略微超过短边半径 —— 溢出的是最外圈很淡的部分，裁掉不影响"圆"的观感。
   const r = Math.min(equiv * GLOW_R_EQ, Math.min(wpx, hpx) * 0.5 * GLOW_R_SIDE);
-  u.glowRadius.value = r;
+  // 密码键：按住时光斑半径 ×(1 + 0.45×press)，亮区铺满整键。
+  // max(0, press) 夹住松开过冲（press 会到 −0.28），回弹时光不会缩一下。
+  // 其他玻璃一律走 r —— 与改动前逐值相同。
+  u.glowRadius.value = (glass.mode === 'passwd')
+    ? r * (1 + PW_GLOW_R_PRESS_ADD * Math.max(0, glass.press || 0))
+    : r;
   u.glowStretchDir.value.set(glass.glowSDX || 1, glass.glowSDY || 0);
   u.glowStretchAmt.value = glass.glowAmtS || 0;
   u.glowPlateau.value = GLOW_PLATEAU;
   u.glowEdgeFadePx.value = GLOW_EDGE_FADE_PX;
-  u.glowGain.value = GLOW_GAIN;
+  u.glowGain.value = (glass.mode === 'passwd')
+    ? GLOW_GAIN + PW_GLOW_PRESS_ADD * Math.max(0, glass.press || 0)
+    : GLOW_GAIN;
   u.glowLens.value = GLOW_LENS;
   u.uTime.value = clockT;
 }
@@ -2428,7 +2668,9 @@ function createFluidTexture(w, h) {
   ctx.save();
   ctx.strokeStyle = 'rgba(255,255,255,0.060)';
   ctx.lineWidth = Math.max(1, S * 0.007);
-  const stripe = Math.max(7, S * 0.028);
+  const rawStripe = Math.max(7, S * 0.028);
+  const nStripe = Math.max(2, Math.round(h / rawStripe));
+  const stripe = h / nStripe;   // 让间距整除画布高度 → 45°斜条纹上下平铺无缝
   for (let d = -h; d < w + h; d += stripe) {
     ctx.beginPath();
     ctx.moveTo(d, 0);
@@ -2482,25 +2724,31 @@ function createFluidTexture(w, h) {
     ['disc', 0.58, 0.88, 0.018, 0.000, '#ffd93d'],
   ];
   for (const [kind, fx, fy, fr, flw, color] of geo) {
-    const cx = fx * w, cy = fy * h, r = fr * S * GEO_SCALE;
+    const cx = fx * w, r = fr * S * GEO_SCALE;
     ctx.strokeStyle = color; ctx.fillStyle = color;
-    if (kind === 'disc') {
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-    } else if (kind === 'ring') {
-      ctx.lineWidth = Math.max(1.2, flw * S * GEO_LW);
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-    } else if (kind === 'tri') {
-      ctx.beginPath();
-      for (let k = 0; k < 3; k++) {
-        const a = -Math.PI / 2 + k * Math.PI * 2 / 3;
-        const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
-        if (k) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+    const lw = Math.max(1.2, flw * S * GEO_LW);
+    /* 上下无缝：每个图案在 y 方向复制三份（-h / 0 / +h）。
+       越界的那半边会出现在画布另一头 → 平铺滚动时接缝两侧连续，看不出缝。 */
+    for (const dy of [0, -h, h]) {
+      const cy = fy * h + dy;
+      if (kind === 'disc') {
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      } else if (kind === 'ring') {
+        ctx.lineWidth = lw;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      } else if (kind === 'tri') {
+        ctx.beginPath();
+        for (let k = 0; k < 3; k++) {
+          const a = -Math.PI / 2 + k * Math.PI * 2 / 3;
+          const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+          if (k) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        }
+        ctx.closePath(); ctx.fill();
+      } else {
+        ctx.lineWidth = lw;
+        ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(cx, cy, r, -0.30 * Math.PI, 0.92 * Math.PI); ctx.stroke();
       }
-      ctx.closePath(); ctx.fill();
-    } else {
-      ctx.lineWidth = Math.max(1.2, flw * S * GEO_LW);
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.arc(cx, cy, r, -0.30 * Math.PI, 0.92 * Math.PI); ctx.stroke();
     }
   }
 
@@ -2517,10 +2765,12 @@ function createFluidTexture(w, h) {
   ];
   for (const [x0, y0, cx1, cy1, x1, y1, color, lw] of curves) {
     ctx.strokeStyle = color; ctx.lineWidth = Math.max(1.2, lw * S * GEO_LW);
-    ctx.beginPath();
-    ctx.moveTo(x0 * w, y0 * h);
-    ctx.quadraticCurveTo(cx1 * w, cy1 * h, x1 * w, y1 * h);
-    ctx.stroke();
+    for (const dy of [0, -h, h]) {
+      ctx.beginPath();
+      ctx.moveTo(x0 * w, y0 * h + dy);
+      ctx.quadraticCurveTo(cx1 * w, cy1 * h + dy, x1 * w, y1 * h + dy);
+      ctx.stroke();
+    }
   }
   ctx.restore();
 
@@ -2538,11 +2788,14 @@ function createFluidTexture(w, h) {
   let seed = 20240927;
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
   for (let i = 0; i < 400; i++) {
-    const x = rnd() * w, y = rnd() * h;
+    const x = rnd() * w, y0 = rnd() * h;
     const rr = 1.2 + rnd() * 3.2;
     const bright = rnd() > 0.45;
     ctx.fillStyle = bright ? 'rgba(255,255,255,0.12)' : 'rgba(0,15,45,0.12)';
-    ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fill();
+    for (const dy of [0, -h, h]) {
+      const y = y0 + dy;
+      ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fill();
+    }
   }
   ctx.restore();
 
@@ -2556,6 +2809,8 @@ function setDefaultBackground() {
   clearBlurCache();
   bgSourceIsVideo = false;
   texture = createFluidTexture(W, H);
+  texture.wrapT = THREE.RepeatWrapping;      // 垂直方向循环：上下无限滚动靠 wrapT 卷回来
+  texture.wrapS = THREE.ClampToEdgeWrapping; // 水平不卷绕（与老版一致）
   bgSourceEl = texture.image;
   thumbTexDirty = true; thumbTexFull = true;   // 滑块折射纹理里垫着一份背景，换背景要整屏重铺
   if (material && material.uniforms) {          // 降级模式（无 WebGL）：没有材质可设
@@ -2649,6 +2904,8 @@ function setImageBackground(file) {
     texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
+    texture.wrapT = THREE.RepeatWrapping;      // 自定义图片同样支持上下无限滚动
+    texture.wrapS = THREE.ClampToEdgeWrapping;
     material.uniforms.tDiffuse.value = texture;
     material.uniforms.bgTexSize.value.set(W, H);
     bgSourceEl = canvas;      // 模糊源用这张已裁好的画布
@@ -2895,7 +3152,7 @@ function refreshBlurTextures() {
      只在目录页做：其它展示页自己也有动画，不该替控制中心背这份开销。 */
   if (!ccSheetOn()) {
     /* 【原判断写成 sceneMode === 'menu'，是段从未执行过的死代码】
-       sceneMode 只有 buttons / switches / slider / tabbar / control 五种取值，
+       sceneMode 只有 buttons / switches / slider / tabbar / control / passwd / dialog 七种取值，
        目录页是用 menuOpen 标志表示的，'menu' 从来不是场景值 —— 所以这段预热
        **一次都没跑过**。真机日志里「进控制中心那一帧 render 花 61.9ms」
        （jsSum=124 的那一帧）就是这么来的：需要的 2 张模糊图一张都没备，
@@ -3121,6 +3378,8 @@ const CC_FOCUS_HTML =
   + ccSvg('<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>') + '</span>'
   + '</div>';
 const controlPanelEl = document.getElementById('controlPanel');
+const passwdPanelEl = document.getElementById('passwdPanel');
+const dialogPanelEl = document.getElementById('dialogPanel');
 const ccIconEls = CC_ITEMS.map(it => {
   const el = document.createElement('div');
   const isMedia = (it[0] === 'media');
@@ -3143,6 +3402,48 @@ const ccIconEls = CC_ITEMS.map(it => {
 /* 图标盒接进 syncLabels 的形变跟随：iconEls[i] 每帧被写 transform。
    CC_BASE = 9（控制中心玻璃在 glasses 里的起始索引），顺序与 CC_ITEMS 一致。 */
 ccIconEls.forEach((el, k) => { iconEls[CC_BASE + k] = el; });
+
+/* 密码键内容层：与控制中心图标完全同一套做法 —— 每块玻璃上盖一个同尺寸透明盒，
+   盒里只画数字 + 字母，玻璃材质由 canvas 提供。
+   盒子按 PW_ITEMS 与玻璃严格重合，syncLabels 每帧写 transform 时
+   文字与玻璃是同一个变换（拖动时字跟着一起拉扯，不会两层分离）。 */
+const pwIconEls = PW_ITEMS.map(it => {
+  const el = document.createElement('div');
+  el.className = 'pw-ico';
+  el.style.left   = (it[1] - PW_D / 2) + 'px';
+  el.style.top    = (it[2] - PW_D / 2) + 'px';
+  el.style.width  = PW_D + 'px';
+  el.style.height = PW_D + 'px';
+  const letters = PW_LETTERS[it[0]] || '';
+  el.innerHTML = '<span class="pw-digit">' + it[0] + '</span>'
+               + (letters ? '<span class="pw-letters">' + letters + '</span>' : '');
+  passwdPanelEl.appendChild(el);
+  return el;
+});
+pwIconEls.forEach((el, k) => { iconEls[PW_BASE + k] = el; });
+
+/* 玻璃对话框的内容层：与密码键完全同一套做法 —— 每块玻璃上盖一个同尺寸
+   透明盒，盒里只画文字，玻璃材质由 canvas 提供。
+   盒子按 DLG_ITEMS 与玻璃严格重合，syncLabels 每帧写 transform 时
+   文字与玻璃是同一个变换（拖动时字跟着一起拉扯，不会两层分离）。 */
+const DLG_TEXT = '这是一段示例文字，用来展示液态玻璃材质在对话框上的表现。'
+               + '对话框本身固定不动，你可以拖动下方的按钮，看看边缘的折射与拉伸如何跟着手指变化。';
+const dlgIconEls = DLG_ITEMS.map((it, k) => {
+  const el = document.createElement('div');
+  el.className = (k === 0) ? 'dlg-box' : 'dlg-btn';
+  el.style.left   = (it[0] - it[2] / 2) + 'px';
+  el.style.top    = (it[1] - it[3] / 2) + 'px';
+  el.style.width  = it[2] + 'px';
+  el.style.height = it[3] + 'px';
+  el.innerHTML = (k === 0)
+    ? '<span class="dlg-title">玻璃对话框</span>'
+      + '<span class="dlg-text">' + DLG_TEXT + '</span>'
+    : '<span class="' + (k === 1 ? 'dlg-btn-cancel' : 'dlg-btn-ok') + '">'
+      + (k === 1 ? '取消' : '确定') + '</span>';
+  dialogPanelEl.appendChild(el);
+  return el;
+});
+dlgIconEls.forEach((el, k) => { iconEls[DLG_BASE + k] = el; });
 
 // 投影层：每个玻璃下面垫一个同尺寸的圆角阴影（Backdrop 的 backdropShadow）
 const shadowEls = glasses.map(() => {
@@ -3266,7 +3567,14 @@ function syncLabels() {
          thumbStep 读到的 rect，本体与条严格同步。 */
       const b = (sceneMode === 'tabbar' && i === 7 && tbarBounce > 0.0005)
         ? ' scale(' + (1 + tbarBounce).toFixed(4) + ')' : '';
-      const tfI = jellyTransform(g, LABEL_SQUASH) + b;   // 图标/按钮文字同步形变
+      /* 密码键按下：数字/字母跟着玻璃一起等比放大，倍率与 setGlassUniforms 里
+         的 pressS 完全一致（同一个 PW_PRESS_SCALE）。不打折 —— 打折扣会让字
+         比键面小一圈，看着像「字缩了、键大了」两层分离。
+         缩放原点默认就是元素中心，而键的文字盒与玻璃严格重合（PW_D × PW_D），
+         两者中心严格同一个点。 */
+      const pb = (g.mode === 'passwd' && Math.abs(g.press || 0) > 0.0005)
+        ? ' scale(' + (1 + (g.press || 0) * PW_PRESS_SCALE).toFixed(4) + ')' : '';
+      const tfI = jellyTransform(g, LABEL_SQUASH) + b + pb;   // 图标/按钮文字同步形变
       if (c.IT !== tfI) { ic.style.transform = tfI; c.IT = tfI; }
       if (i === 7) tbarBouncePrevForDom = tbarBounce;   // 记下「已写进 DOM」的倍率
     }
@@ -3305,7 +3613,12 @@ const JELLY_PRESS  = 0.085;  // 按下时的挤压量（点击反馈）
    —— 观感是整块往中间缩一下（用户反馈的「往中间挤压」）。这里对它取 0，
    于是非向下方向 = 完全没反应；向下拖的拉伸不受影响。 */
 function jPress(g) {
-  return (CC_DRAG_ONLY_DOWN && typeof ccSheet !== 'undefined' && g === ccSheet) ? 0 : JELLY_PRESS;
+  if (CC_DRAG_ONLY_DOWN && typeof ccSheet !== 'undefined' && g === ccSheet) return 0;
+  /* 密码键：按下不做「沿轴挤压」—— 那个形变量就是点击时的跳动来源。
+     改为走 press 等比放大（见 PW_PRESS_SCALE），拖动时的果冻拉伸不受影响
+     （那条链路是 wOut 过渡后的 +m，与本函数无关）。 */
+  if (g && g.mode === 'passwd') return 0;
+  return JELLY_PRESS;
 }
 
 const POS_K      = 520;      // 位置刚度 → ω≈22.8 rad/s，周期 0.28s
@@ -3483,6 +3796,42 @@ function stepGlass(g, dt) {
     }
   }
 
+  // ---------- ④ 按下缩放（仅密码键）：按住变大，松开欠阻尼缩回 ----------
+  /* 与 ③ 同一根弹簧的常量：按住中 ζ=1（稳稳跟住、不抖），松开切 ζ=0.45
+     （欠阻尼 → 缩过头一点点再坐回来，就是「一点回弹」）。
+     非密码键这三个量恒为 0，短路条件一次判断就跳过，零开销。 */
+  if (g.press !== 0 || g.pressV !== 0 || g.pressHeld) {
+    const tP = g.pressHeld ? 1 : 0;
+    /* 刚度取果冻那根弹簧的 JELLY_K（ω≈28.6 rad/s，周期 0.22s）：按键反馈要跟手，
+       用浮起那根（ω≈22.8）会慢半拍。
+       按住中配 LIFT_C_HELD（ζ≈0.80，几乎临界）→ 稳稳涨到 1，不抖；
+       松开配 LIFT_C_FREE（ζ≈0.36）→ 欠阻尼，缩过头约 30% 再坐回来，
+       乘上 PW_PRESS_SCALE 后是 4.3% 的尺寸回弹 —— 「一点回弹」的量级。 */
+    const cp = g.pressHeld ? LIFT_C_HELD : LIFT_C_FREE;
+    /* 分相刚度：按住（变大）用 PW_PRESS_K_MUL_HELD（快），松开（缩回）用
+       PW_PRESS_K_MUL（慢）。松开阶段这两个常量一个没动 → 缩回的 0.72s
+       和 4.45% 回弹原样保留；只把「按下去长大」这一段变快。
+       阻尼同样乘 √mul 保 ζ 不变：按住仍是 ζ≈0.80（稳稳涨到 1、不抖），
+       松开仍是 ζ≈0.36（欠阻尼，带那一点回弹）。
+       JELLY_K / LIFT_C_* 本身不改 —— 那两个是全局常量，果冻形变、浮起、
+       控制中心大玻璃、滑块全在用，动一丁点都会牵连其他页面。 */
+    const mul = g.pressHeld ? PW_PRESS_K_MUL_HELD : PW_PRESS_K_MUL;
+    const kP = JELLY_K * mul;
+    const cP = cp * Math.sqrt(mul);
+    /* 子步积分：与 ccSheet 同一处理 —— 显式欧拉在 dt 偏大时会发散
+       （沙盒实测帧间隔 183ms 时 JELLY_K·dt≈149，press 会震荡、果冻 jAmt 会飙到 -12）。
+       按 1/60 切子步：60fps 下 n=1 与单步逐值一致；低帧率下自动细分，不会炸。 */
+    const n = Math.max(1, Math.ceil(dt / (1 / 60)));
+    const h = dt / n;
+    for (let s = 0; s < n; s++) {
+      g.pressV += (-kP * (g.press - tP) - cP * g.pressV) * h;
+      g.press  += g.pressV * h;
+    }
+    if (!g.pressHeld && Math.abs(g.press) < 0.004 && Math.abs(g.pressV) < 0.25) {
+      g.press = 0; g.pressV = 0;    // 缩到位，停稳
+    }
+  }
+
   const cj = isDrag ? JELLY_C_DRAG : JELLY_C_FREE;
   g.jTarget = tm; g.jTrT = tt;
   g.jVel += (-JELLY_K * (g.jAmt - g.jTarget) - cj * g.jVel) * dt;
@@ -3531,6 +3880,10 @@ function updateJelly(dt) {
       if (Math.abs(g.jTr   || 0) < 3e-3 && Math.abs(g.jTrV  || 0) < 3e-3) { g.jTr = 0; g.jTrV = 0; }
       if (Math.abs(g.jOx   || 0) < 0.06   && Math.abs(g.jOy   || 0) < 0.06)   { g.jOx = 0; g.jOy = 0; }
       if (Math.abs(g.lift  || 0) < 3e-3 && Math.abs(g.liftV || 0) < 3e-3) { g.lift = 0; g.liftV = 0; }
+      /* 按下缩放（press）：阈值与 stepGlass 自带的归零一致（0.25 是速度量级，
+         press 弹簧的速度峰值在 10 上下，用 3e-3 会迟迟吸不住）。
+         非密码键 press 恒为 0，这里只是把它赋值成 0，无副作用。 */
+      if (Math.abs(g.press || 0) < 3e-3 && Math.abs(g.pressV || 0) < 0.25) { g.press = 0; g.pressV = 0; }
     };
     if (typeof ccSheet !== 'undefined') snap(ccSheet);
     for (const g of glasses) { if (!g.hidden) snap(g); }
@@ -3562,11 +3915,108 @@ function jellyRelease(g) {
 
 let dragging = null;
 let bgDrag = null;
+/* ===== 背景上下无限滚动 =====
+   只在 shader 里把采样坐标的 v 加上 bgScroll（finishBgUv / 背景 pass 都是
+   bgUv.y += bgScroll），再靠 wrapT=RepeatWrapping 循环 —— 不重新画背景、
+   不重建模糊副本（bgScrollKey 恒为 '0'，模糊纹理仍是原来那几张），
+   所以拖动背景**零纹理生成**，玻璃帧率不受影响。 */
+let bgScrollPx = 0;   // 已滚动量（设备像素，向下为正）
+let bgScrollV  = 0;   // 惯性速度（设备像素/秒）
+let thumbTexScrollMark = 0;   // 上次重铺滑块折射纹理时的滚动量（用于停稳后补一次重铺）
+const BG_SCROLL_DAMP = 3.2;   // 惯性衰减系数（1/s），越大停得越快
+const BG_SCROLL_STOP = 2;     // 速度小于此值（设备px/s）就吸附停住
+/* —— 惯性（fling）速度的采样与限幅 ——
+   原写法 v = dy / dt 只取**最后一次** pointermove 的瞬时值，且 dt 下限只有 1ms：
+     · 浏览器会合并/节流 pointermove，最后一次事件常常「间隔极短、位移却不小」，
+       于是 1~2ms 里挪 3px 就算出 1500~3000 px/s，松手后背景直接飞出去；
+     · 点按钮时手指的微小抖动走的是同一条路 ——「点一下按钮，背景疯狂滑动」。
+   现在改成三件事：
+     1) 取最后 100ms 窗口内的**平均**速度，单次采样 dt 不足 8ms 按 8ms 计；
+     2) 初速上限，再快也不会甩飞；
+     3) 两道「这算不算甩」的闸门：全程位移够不够、手指停没停。 */
+const BG_SCROLL_MIN_DT    = 40;         // 速度分母的时间下限（ms）：手势再短也按 40ms 算，
+                                        // 否则「3ms 里挪 12px」也能算出 4000px/s
+const BG_SCROLL_WIN       = 100;        // 速度取样窗口（ms）
+const BG_SCROLL_V_MAX     = 4000;       // 惯性初速上限（设备px/s）
+const BG_SCROLL_FLING_AGE = 90;         // 最后一次 move 距今超过这个 → 手指已停住，不甩
+const BG_SCROLL_FLING_MIN = 14 * SCALE; // 全程位移不足这个（14 CSS px）→ 视为点击/微抖，不甩
 
-/* 背景滚动未启用：bgDrawImage 退化为普通 drawImage（与老版逐字一致）。 */
+function bgScrollStep(dt) {
+  if (bgDrag) {
+    // 拖拽中：位置由 bgDragMove 直接改，这里只同步 uniform
+  } else if (Math.abs(bgScrollV) > BG_SCROLL_STOP) {
+    bgScrollPx += bgScrollV * dt;
+    bgScrollV *= Math.exp(-BG_SCROLL_DAMP * dt);
+  } else {
+    bgScrollV = 0;
+  }
+  if (material && material.uniforms) {
+    material.uniforms.bgScroll.value = bgScrollPx / H;   // 单位=整张背景高度，wrapT 自动循环
+  }
+  /* 停稳后把「滑块折射纹理」里垫的那份背景重铺一次。
+     拖动中绝不重铺 —— 那会每帧整屏 drawImage + 重画四条轨道 + 整屏上传，
+     正是当初那版卡死的原因。只在滚动真正停下时补一次。
+     而滚背景与浮起玻璃本来就互斥（按住控件是拖玻璃、空白处才是滚背景），
+     停稳这一帧手上没有玻璃，一次性开销感知不到。 */
+  if (!bgDrag && bgScrollV === 0 && Math.abs(bgScrollPx - thumbTexScrollMark) > 0.5) {
+    thumbTexScrollMark = bgScrollPx;
+    thumbTexDirty = true; thumbTexFull = true;
+  }
+}
+
+/* 让背景**立刻**停下（惯性/拖拽都掐掉）。
+   场景：背景还在惯性滑行时，用户点了开关 / 滑杆 / 标签栏 —— 玻璃浮起要折射的
+   正是「当前这一帧的背景」，背景若还在飘，手指没动却看到玻璃里的背景继续走，
+   观感就是「玻璃自己在动」。所以浮起一开始就把惯性归零。
+   只清速度、不改 bgScrollPx：位置停在当前处（不回弹、不跳），
+   而 bgScrollStep 里那条「停稳后补一次重铺」会因 bgScrollV 归零自动触发，
+   滑块折射纹理里垫的那份背景随即同步 —— 不需要在这里额外标脏。 */
+function bgScrollStopNow() {
+  bgDrag = null;      // 拖拽与浮起互斥，正常到这里是 null；写上只是防多指/异常时序
+  bgScrollV = 0;
+}
+
+function bgDragMove(e) {
+  if (!bgDrag) return;
+  const [, py] = toDevice(e);
+  const now = performance.now();
+  const dy = py - bgDrag.lastY;
+  bgScrollPx += dy;                 // 手指往下 → 背景内容往下（跟手，1:1）
+  bgDrag.lastY = py;
+  bgDrag.lastT = now;
+  /* 速度取样：把本次点记进窗口，丢掉窗口外的旧样本，
+     再用「窗口内总位移 / 总时长」算平均速度 —— 抹掉单帧抖动的尖刺。
+     窗口内只有一个样本时（刚按下），分子为 0，速度自然是 0。 */
+  const s = bgDrag.samples;
+  s.push({ y: py, t: now });
+  while (s.length > 1 && now - s[0].t > BG_SCROLL_WIN) s.shift();
+  const span = Math.max(BG_SCROLL_MIN_DT, now - s[0].t) / 1000;
+  bgDrag.v = (py - s[0].y) / span;   // 设备px/s，松手后作为惯性初速度
+  if (material && material.uniforms) {
+    material.uniforms.bgScroll.value = bgScrollPx / H;
+  }
+}
+
+/* 背景滚动：Canvas2D 这条「手绘纹理」路径也要跟着滚。
+   之前这里退化为普通 drawImage（与老版逐字一致），于是出现一处割裂：
+     主背景                  —— shader 采样，bgUv.y += bgScroll，跟着滚
+     滑块折射纹理里垫的那份背景 —— 本函数用 drawImage 手绘，永远停在滚动量=0 的位置
+   表现就是「开关 / 玻璃滑块 / 标签栏三个场景里，玻璃一浮起透出来的背景是固定的」。
+
+   方向对齐：CanvasTexture 默认 flipY，v = 1 - y/H，shader 里 v += bgScroll
+   等价于采样 canvas 的 y - bgScrollPx，所以这里取源 y = sy - off
+   （off = bgScrollPx 归一到 [0,H)），再用两段 drawImage 处理跨边界，
+   即 wrapT=RepeatWrapping 在 Canvas2D 上的等价实现。 */
 function bgDrawImage(ctx, sx, sy, sw, sh, dx, dy, dw, dh) {
   if (!bgSourceEl) return;
-  try { ctx.drawImage(bgSourceEl, sx, sy, sw, sh, dx, dy, dw, dh); } catch (e) {}
+  try {
+    const off = ((bgScrollPx % H) + H) % H;
+    if (off < 0.5) { ctx.drawImage(bgSourceEl, sx, sy, sw, sh, dx, dy, dw, dh); return; }
+    const sY = (((sy - off) % H) + H) % H;
+    const h1 = Math.min(H - sY, sh);
+    ctx.drawImage(bgSourceEl, sx, sY, sw, h1, dx, dy, dw, h1);
+    if (h1 < sh) ctx.drawImage(bgSourceEl, sx, 0, sw, sh - h1, dx, dy + h1, dw, sh - h1);
+  } catch (e) {}
 }
 const BG_FEATHER_FRAC = 0;      // 上下羽化：未启用（背景滚动未启用）
 let forceRenderNext = false;    // 占位（本版不做空闲跳帧，恒不触发）
@@ -3626,25 +4076,55 @@ function clampToPhone(g) {
 // 按下（挤压反馈）。只设**目标**，让弹簧自己走过去。
 // 原来直接赋值 jAmt=-PRESS，形状会在按下那一帧瞬间弹一下（因为 shift∝jAmt
 // 会立刻产生 reach·PRESS 的位移），观感就是「顿」。
+/* 控制中心整块玻璃：点击干掉。
+   纯点按（手指没挪出点击容差）不产生任何反馈 —— 不发光、不打断正在播的动画；
+   只有真正拖出去（上滑收起 / 下拉展开 / 拖形变）才接管。
+   起因：回弹还没放完时点一下，glowAmt 从 0 瞬间垫到 GLOW_TAP_MIN（0.42），
+   光「啪」地亮起来，看着就是跳一下；按下时重设 ccRevealTgt 还会把正在播的
+   出场/收起动画按停在当前进度。两者都只在**真的拖动**时才该发生。 */
+const CC_TAP_DEAD = true;
+function ccTapDead(g) { return !!(CC_TAP_DEAD && ccSheetOn() && g === ccSheet); }
+
 function beginGlassPress(e, g) {
   const [px, py] = toDevice(e);
-  if (g.glowAmt < GLOW_TAP_MIN) g.glowAmt = GLOW_TAP_MIN;   // 按下即亮（垫底）
+  /* 控制中心整块玻璃：按下不发光（光只在拖出容差后才跟手指走）。 */
+  if (!ccTapDead(g) && g.glowAmt < GLOW_TAP_MIN) g.glowAmt = GLOW_TAP_MIN;   // 按下即亮（垫底）
   g.glowTX = g.glowX; g.glowTY = g.glowY;   // 尾点归到头点：否则会从上次位置拉出一条长尾
   g.glowVX = 0; g.glowVY = 0; g.prevGlowX = undefined; g.prevGlowY = undefined;
   g.glowAmtS = 0; g.glowSDX = 1; g.glowSDY = 0;
-  dragging = { glass: g, dx: 0, dy: 0, moved: 0, sx: px, sy: py };
+  dragging = { glass: g, dx: 0, dy: 0, moved: 0, sx: px, sy: py, pid: e.pointerId };
   g._ox = 0; g._oy = 0;                       // 拉扯量从 0 起算（相对按下点）
   // 控制中心整块玻璃：轴锁死为纵向（π/2 = 屏幕系向下），与「只认向下拉扯」配套
   const along = (CC_DRAG_ONLY_DOWN && g === ccSheet)
     ? Math.PI / 2
     : ((g.width >= g.height) ? 0 : Math.PI / 2);
-  g.jAng = along;
-  g.jDirX = Math.cos(along); g.jDirY = Math.sin(along);
-  g.jTr = 0; g.jTrV = 0;                      // 按下不位移
+  /* 回弹**还没放完**就再次按下：这里绝不能硬清零，否则就是「跳一下」。
+     ① 位移 jTr：松手后玻璃正沿轴往回走（jTr≠0、jTrV≠0），原来 g.jTr = 0 会
+        在按下那一帧把位移瞬间抹平 —— 实测一帧内瞬移 3.16 CSS px，观感就是跳。
+        其实目标本来就是 0（jHeld 分支里 tt = 0），让弹簧自己走过去即可：
+        静止时按下 jTr 本来就是 0，行为与原来逐值相同。
+     ② 轴 jAng：回弹途中轴是冻结的（保持拖拽方向），硬置回 along 会让形变
+        方向在一帧内直接转 90°，形状同样瞬跳。仍在动就保持原轴，拖动时
+        轴会照常重新跟随手指方向（DIR_LEN_GATE 那条）。 */
+  const jAtRest = Math.abs(g.jAmt || 0) < 1e-3 && Math.abs(g.jTr  || 0) < 1e-3 &&
+                  Math.abs(g.jVel || 0) < 1e-2 && Math.abs(g.jTrV || 0) < 1e-2;
+  if (jAtRest) {
+    g.jAng = along;
+    g.jDirX = Math.cos(along); g.jDirY = Math.sin(along);
+    g.jTr = 0; g.jTrV = 0;                      // 静止时按下：不位移（与原来一致）
+  }
+  g.jTrT = 0;                                   // 按下不位移：目标归 0，让弹簧走
   g.jHeld = true;                             // 按住期间保持挤压，松手才回弹
+  /* 密码键：按下 → 等比放大（press 弹簧目标置 1）。与 jHeld 同一个入口，
+     拖动期间也保持放大，松手才一起撤。 */
+  if (g.mode === 'passwd') g.pressHeld = true;
   /* 控制中心：记下按下时的进度与纵向起点，拖拽 → 展开 / 收起（见 ccRevealStep）。
      按下即取消「正在收起」—— 否则滑到一半又按住，动画会接着往 0 跑。 */
-  if (ccSheetOn() && g === ccSheet) {
+  /* 控制中心：记下按下时的进度与纵向起点，拖拽 → 展开 / 收起（见 ccRevealStep）。
+     按下即取消「正在收起」—— 否则滑到一半又按住，动画会接着往 0 跑。
+     点击干掉时这一段**不在按下时执行**：纯点按不该把正在播的出场/收起动画
+     按停在当前进度，改成拖出点击容差后由 onDragMove 建立（见那里）。 */
+  if (ccSheetOn() && g === ccSheet && !ccTapDead(g)) {
     ccRevealDrag = { y0: py, p0: ccReveal, peakY: py };
     ccRevealTgt = ccReveal;
     ccDismissing = false; ccEntering = false;   // 接管：进场软弹簧让位给手指
@@ -3665,14 +4145,80 @@ function otherGlassAt(px, py) {
   return null;
 }
 
+/* 开关 / 玻璃滑块 / 标签栏 这三个场景里，浮起的滑块玻璃是**单独渲染**的：
+   它不在 glasses 数组里，canvas 的 hitGlass 根本看不见它。
+   而玻璃浮起后会比 DOM 命中层（.sw / .sl / .tbar-hit）大一圈、向外探出，
+   于是按在「玻璃探出来的那一圈」上会被判成空白 → 启动背景滚动，
+   表现就是「手在拖玻璃，背景却跟着飘」。
+   这里补一层命中，只回答「该不该启动背景滚动」，不做任何拖动接管 ——
+   拖动仍由 DOM 命中层负责，玻璃本身不接受新的按下。
+   坐标：dxPx/dyPx 是设备像素、y 向下（与 toDevice 一致）；
+   th._g* 存的是手机 CSS px，所以乘 SCALE。 */
+function thumbGlassBlocksBg(dxPx, dyPx) {
+  if (sceneMode !== 'switches' && sceneMode !== 'slider' && sceneMode !== 'tabbar') return false;
+  for (let i = 0; i < swThumbs.length; i++) {
+    const th = swThumbs[i];
+    /* 多指：删掉原来的「已有滑块正被按住 → 整屏都不滚背景」。
+       那是单指时代的保护（怕手在拖玻璃、背景却跟着飘），但它会把
+       「另一根手指正在滚背景」也一起屏蔽掉 —— 正是「拖背景同时拖按钮」失效的原因。
+       现在只保留真正必要的那一条：手指按在**浮起玻璃探出来的那一圈**上
+       （那圈不在 DOM 命中层里，会被判成空白），此时不启动背景滚动。
+       至于「同一根手指拖滑块」的场景，它由 DOM 命中层 + pointer capture 接管，
+       根本不会走到 canvas 的 pointerdown。 */
+    const v = th._gvis || 0;
+    if (v <= 0.002) continue;                  // 这块玻璃不在场，不算它的地盘
+    const w = th._gw || 0, h = th._gh || 0;
+    if (w <= 0 || h <= 0) continue;
+    if (Math.abs(dxPx - th._gx * SCALE) <= w * SCALE / 2 &&
+        Math.abs(dyPx - th._gy * SCALE) <= h * SCALE / 2) return true;
+  }
+  return false;
+}
+
+/* 玻璃对话框主体（glasses[DLG_BASE]）：整体固定，按上去什么都不发生。
+   它不在 hitGlass 里（draggable=false），所以按在它上面会被判成「空白」
+   而启动背景滚动 —— 那就等于「拖着对话框能把整个画面拖走」，与「整体不能
+   拖动」相悖。这里补一层，让主体区域成为死区：不拖、也不滚背景。
+   只认 dialog 场景，其余场景一律返回 false，其它页面一个都不受影响。 */
+function dlgBodyBlocksBg(dxPx, dyPx) {
+  if (sceneMode !== 'dialog') return false;
+  if (typeof DLG_BASE === 'undefined') return false;
+  const g = glasses[DLG_BASE];
+  if (!g || g.hidden) return false;
+  return (Math.abs(dxPx - g.x) <= g.width / 2 && Math.abs(dyPx - g.y) <= g.height / 2);
+}
 canvas.addEventListener('pointerdown', e => {
   const [px, py] = toDevice(e);
   setPointer(px / SCALE, py / SCALE);
   const g = hitGlass(px, py);
   // 只让命中的这块发光：记下来，其余玻璃 target 一律为 0
-  activeGlass = g || null;
-  pointerTarget = g ? 1 : 0;
-  if (g) { beginGlassPress(e, g); e.preventDefault(); return; }
+  /* 控制中心整块玻璃：按下不亮，光留到真的拖出去再跟手指（见 onDragMove）。 */
+  const dead0 = ccTapDead(g);
+  activeGlass = dead0 ? null : (g || null);
+  pointerTarget = dead0 ? 0 : (g ? 1 : 0);
+  if (g) {
+    /* 多指：已经有一根手指在拖玻璃了 → 忽略第二根。
+       dragging 是单槽，若在这里直接覆盖，第一块玻璃的 jHeld / pressHeld
+       会永远留在按下态再也收不回来（松手事件认的是第二根的 pointerId）。 */
+    if (dragging) return;
+    beginGlassPress(e, g); e.preventDefault(); return;
+  }
+  /* 落在浮起的滑块玻璃上（或已有滑块被按住）→ 不启动背景滚动。
+     见 thumbGlassBlocksBg：那块玻璃不在 glasses 里，hitGlass 看不见它。 */
+  if (thumbGlassBlocksBg(px, py)) return;
+  /* 玻璃对话框主体：整体固定 —— 按上去既不接受拖拽（draggable=false，
+     hitGlass 已跳过），也不启动背景滚动，即完全不响应。
+     只有「取消 / 确定」两个按钮能拽出果冻。见 dlgBodyBlocksBg。 */
+  if (dlgBodyBlocksBg(px, py)) return;
+  /* 多指：已经有一根手指在滚背景 → 忽略第二根。
+     bgDrag 是单槽，若被第二根顶掉，第一根抬起时就再也找不到自己的手势，
+     背景会停不下来（或惯速度被算成第二根手指的）。 */
+  if (bgDrag) return;
+  /* 空白处按下 → 上下拖动滚背景（惯性 + wrapT 无限循环）。
+     控制中心场景的空白命中 ccSheet，不会走到这里。 */
+  const t0 = performance.now();
+  bgDrag = { lastY: py, lastT: t0, v: 0, px0: bgScrollPx, samples: [{ y: py, t: t0 }], pid: e.pointerId };
+  bgScrollV = 0;
 });
 /* 「选择图片」命中层：
    - 有别的玻璃压在这里 → 优先抓那块，并阻止原生 click（不是选图）
@@ -3702,9 +4248,15 @@ function onDragMove(e) {
   if (!dragging) return;
   const [px, py] = toDevice(e);
   setPointer(px / SCALE, py / SCALE);   // 内透光跟着手指走
-  activeGlass = dragging.glass;         // 拖谁谁亮
-  pointerTarget = 1;
   dragging.moved = Math.max(dragging.moved, Math.hypot(px - dragging.sx, py - dragging.sy));
+  /* 控制中心整块玻璃：拖出点击容差之前一律不亮（点击干掉），
+     拖出去之后才跟手指走 —— 上滑收起 / 下拉展开的视觉反馈不受影响。 */
+  if (ccTapDead(dragging.glass) && dragging.moved <= TAP_SLOP) {
+    activeGlass = null; pointerTarget = 0;
+  } else {
+    activeGlass = dragging.glass;       // 拖谁谁亮
+    pointerTarget = 1;
+  }
   if (dragging.moved > TAP_SLOP) suppressPickClick = true;  // 拖出容差 → 不算点击
   // 玻璃是固定的：只记录「手指拽了多少」，偏移多少由位置弹簧决定
   dragging.glass._ox = px - dragging.sx;
@@ -3713,7 +4265,7 @@ function onDragMove(e) {
      它不在 ccSheet 里，于是从屏幕顶部上滑收起不了控制中心，得先往下拉一下才有反应。
      这里在**拖出点击容差之后**把手势接管过来：y0 取按下点，进度照常跟手。
      容差内的挪动仍然算点击，返回 / 深色模式照旧可点。 */
-  if (ccSheetOn() && !ccRevealDrag && dragging.glass !== ccSheet && dragging.moved > TAP_SLOP) {
+  if (ccSheetOn() && !ccRevealDrag && dragging.moved > TAP_SLOP) {
     ccRevealDrag = { y0: dragging.sy, p0: ccReveal, peakY: dragging.sy };
     ccRevealTgt = ccReveal;
     ccDismissing = false; ccEntering = false;
@@ -3745,77 +4297,110 @@ function onDragMove(e) {
   if (pickPressed && dragging.moved > TAP_SLOP) pickBtnEl.classList.remove('pressing');
 }
 canvas.addEventListener('pointermove', e => {
-  if (bgDrag) { bgDragMove(e); return; }
-  if (!dragging) {
+  /* 多指分流：事件按 pointerId 认领，谁按下的归谁。
+     原来只判 `if (bgDrag)` / `if (!dragging)`，于是**任何一根手指**的移动
+     都会被当成背景/玻璃那根手指的移动 —— 一根手指拖玻璃、另一根滚背景时，
+     玻璃的 move 被背景吃掉（玻璃不动、背景乱飘），反过来也一样。 */
+  if (bgDrag && e.pointerId === bgDrag.pid) { bgDragMove(e); return; }
+  if (dragging && e.pointerId === dragging.pid) { onDragMove(e); return; }
+  /* 当前有手势在跑（是另一根手指的），或完全没有手势 → 只做悬停 / 光标。
+     悬停只在彻底没有手势时做，免得第二根手指乱动把高光抢走。 */
+  if (!dragging && !bgDrag) {
     const [hx, hy] = toDevice(e);
     const over = !!hitGlass(hx, hy);
     canvas.style.cursor = over ? 'grab' : 'default';
     const hg = hitGlass(hx, hy);
     if (hg) { setPointer(hx / SCALE, hy / SCALE); activeGlass = hg; pointerTarget = GLOW_HOVER; }
     else { activeGlass = null; pointerTarget = 0; }
-    return;
   }
-  onDragMove(e);
 });
 // 指针离开手机屏：光淡出
-canvas.addEventListener('pointerleave', () => { if (!dragging) { activeGlass = null; pointerTarget = 0; } });
+canvas.addEventListener('pointerleave', () => { if (!dragging && !bgDrag) { activeGlass = null; pointerTarget = 0; } });
 
 function endDrag(e) {
-  // 松手 → 内透光淡出（RELEASE 比 ATTACK 慢，有余韵）。
-  // 触摸没有"悬停"这回事，手指离开就该灭；鼠标松手后指针往往还在按钮上，回到弱档。
-  const isTouch = !!(e && e.pointerType === 'touch');
-  if (!isTouch && e) {
-    const [ex, ey] = toDevice(e);
-    const hg = hitGlass(ex, ey);
-    activeGlass = hg;
-    pointerTarget = hg ? GLOW_HOVER : 0;
-  } else {
-    activeGlass = null;
-    pointerTarget = 0;
-  }
-  if (!dragging) {
-    if (pickPressed) {
-      pickPressed = false;
-      pickBtnEl.classList.remove('pressing');
-      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
-    }
+  const pid = e.pointerId;
+  /* ===== ① 背景滚动手势：只有「按下背景的那根手指」抬起才结束背景滚动 =====
+     原来只判 `if (bgDrag)`（不看是谁的），于是另一根手指抬起也会走进来：
+       · 松开按钮那一下把背景的惯速度算成按钮手指的速度 → 背景疯狂滑动；
+       · 背景那根手指还按着，却被提前结束 → 背景停不下来；
+       · 更糟的是它 return 掉了，按钮的 jHeld/pressHeld 永远收不回来，
+         之后背景那根手指一动就把按钮拖走了（拖动权被另一只手夺走）。 */
+  if (bgDrag && bgDrag.pid === pid) {
+    /* 两道闸门，缺一不可，否则「点一下按钮、背景飞出去」：
+         · 全程位移够不够 —— 点击时手指的微小抖动不该产生惯性
+         · 手指停没停     —— 拖到位后停住再松手，惯性应当为 0（这是系统手势的标准行为） */
+    const moved = Math.abs(bgScrollPx - bgDrag.px0);
+    const fresh = (performance.now() - bgDrag.lastT) <= BG_SCROLL_FLING_AGE;
+    let v = (moved >= BG_SCROLL_FLING_MIN && fresh) ? bgDrag.v : 0;
+    if (v >  BG_SCROLL_V_MAX) v =  BG_SCROLL_V_MAX;
+    if (v < -BG_SCROLL_V_MAX) v = -BG_SCROLL_V_MAX;
+    bgScrollV = v;
+    bgDrag = null;
+    try { if (e) canvas.releasePointerCapture(pid); } catch (_) {}
     return;
   }
-  const g = dragging.glass;
-  const moved = dragging.moved;
-  g.jHeld = false;                                  // 松手 → 目标归零 → 弹回
-  dragging = null;
-  pickPressed = false;
-  pickBtnEl.classList.remove('pressing');
-  jellyRelease(g);                                  // 松手 → 果冻回弹
-  /* 控制中心：松手裁决 —— 已滑过阈值就继续收到 0 并退回目录页（与手机一致）；
-     否则弹回 1，位置与现在完全相同。
-     注意顺序：必须在 jellyRelease 之后 —— 上滑时形变恒为 0，
-     jellyRelease 会走「零形变直接清零」那条分支，不会补一记假的回弹冲量。 */
-  if (ccSheetOn() && ccRevealDrag) {
-    ccRevealDrag = null;
-    if (ccReveal < CC_DISMISS_AT) { ccRevealTgt = 0; ccDismissing = true; }
-    else { ccRevealTgt = 1; ccDismissing = false; }
+  /* ===== ② 玻璃拖拽手势：只有「按下玻璃的那根手指」抬起才结束拖拽 ===== */
+  if (dragging && dragging.pid === pid) {
+    // 松手 → 内透光淡出（RELEASE 比 ATTACK 慢，有余韵）。
+    // 触摸没有"悬停"这回事，手指离开就该灭；鼠标松手后指针往往还在按钮上，回到弱档。
+    const isTouch = !!(e && e.pointerType === 'touch');
+    if (!isTouch && e) {
+      const [ex, ey] = toDevice(e);
+      const hg = hitGlass(ex, ey);
+      activeGlass = hg;
+      pointerTarget = hg ? GLOW_HOVER : 0;
+    } else {
+      activeGlass = null;
+      pointerTarget = 0;
+    }
+    const g = dragging.glass;
+    const moved = dragging.moved;
+    g.jHeld = false;                                  // 松手 → 目标归零 → 弹回
+    g.pressHeld = false;                              // 密码键：缩回（欠阻尼 → 带一点回弹）
+    dragging = null;
+    pickPressed = false;
+    pickBtnEl.classList.remove('pressing');
+    jellyRelease(g);                                  // 松手 → 果冻回弹
+    /* 控制中心：松手裁决 —— 已滑过阈值就继续收到 0 并退回目录页（与手机一致）；
+       否则弹回 1，位置与现在完全相同。
+       注意顺序：必须在 jellyRelease 之后 —— 上滑时形变恒为 0，
+       jellyRelease 会走「零形变直接清零」那条分支，不会补一记假的回弹冲量。 */
+    if (ccSheetOn() && ccRevealDrag) {
+      ccRevealDrag = null;
+      if (ccReveal < CC_DISMISS_AT) { ccRevealTgt = 0; ccDismissing = true; }
+      else { ccRevealTgt = 1; ccDismissing = false; }
+    }
+    // 选图由 label 的原生 click 负责（最可靠）；这里只处理主题按钮的点击
+    if (moved < TAP_SLOP && g.theme) toggleTheme();
+    if (moved < TAP_SLOP && g.back)  showMenu();      // 返回 → 目录页
+    try { canvas.releasePointerCapture(pid); } catch (_) {}
+    try { pickHitEl.releasePointerCapture(pid); } catch (_) {}
+    return;
   }
-  // 选图由 label 的原生 click 负责（最可靠）；这里只处理主题按钮的点击
-  if (moved < TAP_SLOP && g.theme) toggleTheme();
-  if (moved < TAP_SLOP && g.back)  showMenu();      // 返回 → 目录页
-  try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
-  try { pickHitEl.releasePointerCapture(e.pointerId); } catch (_) {}
+  /* ===== ③ 这根手指不属于任何进行中的手势 =====
+     （另一根手指还按着玻璃 / 背景，而这根只是路过抬起）
+     多指场景下**绝对不能**在这里动 dragging / bgDrag，否则就是「一只手松开按钮，
+     按钮的拖动权就给了另一只拖背景的手」。只有彻底没有手势时，才可能是
+     pickPressed 的收尾。 */
+  if (!dragging && !bgDrag && pickPressed) {
+    pickPressed = false;
+    pickBtnEl.classList.remove('pressing');
+    try { canvas.releasePointerCapture(pid); } catch (_) {}
+  }
 }
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 pickHitEl.addEventListener('pointermove', e => {
-  const [px, py] = toDevice(e);
-  if (!dragging) {
+  /* 同样按 pointerId 认领：只有拖着玻璃的那根手指才走 onDragMove。 */
+  if (dragging && e.pointerId === dragging.pid) { onDragMove(e); return; }
+  if (!dragging && !bgDrag) {
+    const [px, py] = toDevice(e);
     setPointer(px / SCALE, py / SCALE);
     activeGlass = glasses.find(v => v.pick) || null;
     pointerTarget = GLOW_HOVER;
-    return;
   }
-  onDragMove(e);
 });
-pickHitEl.addEventListener('pointerleave', () => { if (!dragging) { activeGlass = null; pointerTarget = 0; } });
+pickHitEl.addEventListener('pointerleave', () => { if (!dragging && !bgDrag) { activeGlass = null; pointerTarget = 0; } });
 pickHitEl.addEventListener('pointerup', endDrag);
 pickHitEl.addEventListener('pointercancel', endDrag);
 
@@ -4856,7 +5441,7 @@ function createThumbBgTexture() {
         if (TBAR_TEX_BLUR_PX > 0 && supportsCanvasFilter()) {
           sctx.filter = 'blur(' + TBAR_TEX_BLUR_PX.toFixed(2) + 'px)';
         }
-        try { sctx.drawImage(bgSourceEl, sx0, sy0, srw, srh, 0, 0, srw, srh); } catch (e) {}
+        try { bgDrawImage(sctx, sx0, sy0, srw, srh, 0, 0, srw, srh); } catch (e) {}
         sctx.filter = 'none';
         /* 中心区：distFromEdge ≥ bandWidth → edgeFactor = 0 → 不偏移，原样铺。 */
         try { ctx.drawImage(sc.canvas, 0, 0, srw, srh, sx0, sy0, srw, srh); } catch (e) {}
@@ -5647,7 +6232,13 @@ function thumbStep(dt) {
                          + (4 + Math.max(0, lf) * 9).toFixed(1) + 'px rgba(0,0,0,'
                          + (0.18 + Math.max(0, lf) * 0.12).toFixed(2) + ')';
     }
-    if (raw <= 0.002 && glassVis <= 0.002) continue;   // 完全沉下且不抖：不画，省一次 draw call
+    if (raw <= 0.002 && glassVis <= 0.002) {
+      th._gvis = 0;                          // 这一帧没玻璃在场 → 命中判断不可用
+      continue;                              // 完全沉下且不抖：不画，省一次 draw call
+    }
+    /* 缓存本帧玻璃包围盒，供「按在浮起的玻璃上不该滚背景」判断（thumbGlassBlocksBg）。
+       纯缓存，不参与渲染。 */
+    th._gx = fx; th._gy = fy; th._gw = fw; th._gh = fh; th._gvis = glassVis;
     // 放大只跟 grow（后段才变大），不跟 lf —— 否则又变成"一边升一边变大"
     setThumbUniforms(fx, fy, fw, fh, glassVis);
     try {
@@ -5763,6 +6354,10 @@ document.getElementById('menuTabbarItem').addEventListener('click', () => showSc
 // 目录里点「控制中心」→ 同属场景层（背景 / 顶栏 / 选择图片 / 滚动都在），
 // 中间不摆任何控件：switchEls 指向空数组，玻璃只留顶栏两个 + 选择图片。
 document.getElementById('menuControlItem').addEventListener('click', () => showScene('control'));
+// 目录里点「密码输入」→ 同属场景层（背景 / 顶栏 / 选择图片都在），中间先留空
+document.getElementById('menuPasswdItem').addEventListener('click', () => showScene('passwd'));
+// 目录里点「玻璃对话框」→ 同属场景层（背景 / 顶栏 / 选择图片都在），中间先留空
+document.getElementById('menuDialogItem').addEventListener('click', () => showScene('dialog'));
 
 /* ================= 场景内容切换：玻璃按钮 / 开关 =================
    两个场景共用同一个 WebGL 场景、同一张流体背景、同一套顶栏与「选择图片」，
@@ -5794,6 +6389,16 @@ function setSceneMode(mode) {
   /* 控制中心：场景层照旧（背景、滚动、顶栏两个按钮、底部「选择图片」全都在），
      只是中间不摆任何控件 —— 用来单独看背景与玻璃材质本身。 */
   const ct = (mode === 'control');
+  /* 密码输入场景：与控制中心同属「场景层」（背景 / 顶栏 / 选择图片全都在），
+     但中间不摆任何控件，也不开整屏大玻璃 ccSheet（ccSheetOn() 只认 control）——
+     等于一块干净的场景底板，内容后续往 #passwdPanel 里填。 */
+  const pw = (mode === 'passwd');
+  /* 玻璃对话框场景：与密码输入同一套「干净底板」思路 ——
+     背景 / 顶栏两个按钮 / 底部「选择图片」全都在，中间不摆任何控件，
+     也不开 ccSheet（ccSheetOn() 只认 control），内容后续往 #dialogPanel 里填。
+     与 passwd 唯一的差别：它自己一块专属玻璃都没有（passwd 有 10 个密码键），
+     所以 setSceneMode 里不需要为它加 glasses 分支，只需把「共用那几块」摘干净。 */
+  const dg = (mode === 'dialog');
   /* 中间那四块玻璃按钮在开关 / 滑块 / 标签栏 / 控制中心四个场景里都要摘掉 ——
      开关场景换成 DOM 开关，滑块场景换成细长调节杆，标签栏场景是条 + 搜索按钮，
      控制中心场景暂空。
@@ -5826,9 +6431,49 @@ function setSceneMode(mode) {
       }
       return;
     }
+    /* 密码键（glasses[28..37]）：只在密码输入场景出现，其余场景一律摘掉。
+       与标签栏 / 控制中心同样的处理 —— 摘掉时把光 / 形变 / 浮起 / 位移全部收干净，
+       否则切回来会带着上一次的拉伸和亮斑（控制中心正是因为这个才专门写了
+       resetCcSheet，这里一并做掉）。
+       必须放在 `if (g.mode !== 'buttons') return;` 之前 ——
+       否则 mode='passwd' 会直接被那行 return 掉，hidden 永远切不动，
+       十个键就会**在所有场景里都显示**（包括目录页和中心）。 */
+    if (g.mode === 'passwd') {
+      g.hidden = !pw;
+      if (!pw) {
+        g.glowAmt = 0; g.glowAmtS = 0;
+        g.jAmt = 0; g.jTr = 0; g.jVel = 0; g.jTrV = 0;
+        g.jOx = 0; g.jOy = 0;
+        g._ox = 0; g._oy = 0; g.jHeld = false;
+        g.lift = 0; g.liftV = 0; g.liftHeld = false;
+        g.press = 0; g.pressV = 0; g.pressHeld = false;
+        g.vx = 0; g.vy = 0;
+        g.x = g.homeX; g.y = g.homeY;
+      }
+      return;
+    }
+    /* 玻璃对话框（glasses[38..40]）：只在玻璃对话框场景出现，其余一律摘掉。
+       与密码键同样的处理 —— 摘掉时把光 / 形变 / 浮起 / 位移全部收干净，
+       否则切回来会带着上一次的拉伸和亮斑。
+       同样必须放在 `if (g.mode !== 'buttons') return;` 之前，
+       否则 mode='dialog' 会被那行 return 掉，三块玻璃会在所有场景里都显示。 */
+    if (g.mode === 'dialog') {
+      g.hidden = !dg;
+      if (!dg) {
+        g.glowAmt = 0; g.glowAmtS = 0;
+        g.jAmt = 0; g.jTr = 0; g.jVel = 0; g.jTrV = 0;
+        g.jOx = 0; g.jOy = 0;
+        g._ox = 0; g._oy = 0; g.jHeld = false;
+        g.lift = 0; g.liftV = 0; g.liftHeld = false;
+        g.press = 0; g.pressV = 0; g.pressHeld = false;
+        g.vx = 0; g.vy = 0;
+        g.x = g.homeX; g.y = g.homeY;
+      }
+      return;
+    }
     if (g.mode !== 'buttons') return;
-    g.hidden = sw || sl || tb || ct;
-    if (sw || sl || tb || ct) {     // 收掉残留的光，切回来时不会突然亮一下
+    g.hidden = sw || sl || tb || ct || pw || dg;
+    if (sw || sl || tb || ct || pw || dg) {     // 收掉残留的光，切回来时不会突然亮一下
       g.glowAmt = 0; g.glowAmtS = 0;
       g.jAmt = 0; g.jTr = 0; g.jVel = 0; g.jTrV = 0;
       g._ox = 0; g._oy = 0; g.jHeld = false;
@@ -5852,7 +6497,7 @@ function setSceneMode(mode) {
      标签栏场景目前中间是空的：switchEls 指向空数组，thumbEls / trackEls 也跟着为空，
      thumbStep 里的所有逐行循环（弹簧、纹理、玻璃摆位）自然一趟都不跑，
      等于「没有控件」而不是「控件还在但藏着」—— 不会留下半浮起的玻璃。 */
-  switchEls = ct ? swEmptyEls : (tb ? tabbarEls : (sl ? sliderEls : switchElsBase));
+  switchEls = (ct || pw || dg) ? swEmptyEls : (tb ? tabbarEls : (sl ? sliderEls : switchElsBase));
   thumbEls  = switchEls.map(e => e.thumb);
   trackEls  = switchEls.map(e => e.track);
   applySwGeometry(tb ? 'tabbar' : (sl ? 'slider' : 'switches'));
@@ -5860,10 +6505,12 @@ function setSceneMode(mode) {
   document.body.classList.toggle('scene-slider', sl);
   document.body.classList.toggle('scene-tabbar', tb);
   document.body.classList.toggle('scene-control', ct);
+  document.body.classList.toggle('scene-passwd', pw);
+  document.body.classList.toggle('scene-dialog', dg);
   /* 标签栏场景没有控件：玻璃的投影 div 是常驻元素（不随场景重建），
      渲染循环又因为 thumbEls 为空而一趟不跑，不显式归零会把上一个场景
      残留的投影带进新页面 —— 中间凭空多出一团阴影。 */
-  if (tb || ct) thumbShadowEls.forEach(d => { d.style.opacity = '0'; });
+  if (tb || ct || pw || dg) thumbShadowEls.forEach(d => { d.style.opacity = '0'; });
   /* 整条 toolbar 的上抬量归零：
      标签栏玻璃 hidden 之后 syncLabels 会 early-return，不再重写 iconEls[i].transform，
      残留的 translateY 会一直挂在 .tbar / .tbar-search 上，下次切回来整条是歪的。 */
@@ -5876,6 +6523,8 @@ function setSceneMode(mode) {
   sliderPanelEl.setAttribute('aria-hidden', sl ? 'false' : 'true');
   tabbarPanelEl.setAttribute('aria-hidden', tb ? 'false' : 'true');
   if (controlPanelEl) controlPanelEl.setAttribute('aria-hidden', ct ? 'false' : 'true');
+  if (passwdPanelEl) passwdPanelEl.setAttribute('aria-hidden', pw ? 'false' : 'true');
+  if (dialogPanelEl) dialogPanelEl.setAttribute('aria-hidden', dg ? 'false' : 'true');
   /* 控制中心：进场 = 从 0 弹到 1（渐渐淡入 + 微微向下移，与手机下拉一致）；
      离场 = 复位成 1 并清掉 DOM 上残留的半透明 / 平移，免得切到别的场景还留着。
      其余场景 ccRevealStep 首行就 return，这两行对它们没有任何作用。 */
@@ -6506,6 +7155,13 @@ function swSetState(i, on) {
    现在按 rise 段公式反解出等效进度：lift = 1-(1-u)²  →  u = 1-√(1-lift)，
    再乘回 tp，位置完全连续，只是方向调头 —— 这才是「随时打断、接着往上」。 */
 function swBeginPress(i) {
+  /* 背景还在惯性滑行时按下开关 / 滑杆 / 标签栏 → 立刻停住。
+     玻璃浮起折射的是「按下那一刻的背景」，让它继续飘就成了手指没动、
+     玻璃里的背景却在走。见 bgScrollStopNow。
+     注意：另一根手指**正在拖背景**（bgDrag 非 null）时不掐断它 ——
+     多指要各管各的：这根手指按它的开关，那根手指照旧滚它的背景。
+     惯性滑行时（bgScrollV ≠ 0）bgDrag 必然是 null，所以这里只判 bgScrollV。 */
+  if (bgScrollV !== 0) bgScrollStopNow();
   const th = swThumbs[i];
   const cur = Math.max(0, Math.min(1, th.lift));
   const u0 = 1 - Math.sqrt(1 - cur);          // 当前高度对应的 rise 进度
@@ -6905,6 +7561,7 @@ window.addEventListener('load', () => {
        —— 真机日志里那几帧 80~130ms 就是这么来的。画完即置位，之后一帧都不进。 */
     if (typeof prewarmCcBlur === 'function') prewarmCcBlur();
     ccRevealStep(dt);
+    bgScrollStep(dt);   // 背景上下无限滚动（惯性 + shader 内 wrapT 循环，零纹理生成）
     updateJelly(dt);
     tickPointer(dt);
     syncLabels();
