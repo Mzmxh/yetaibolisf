@@ -3427,7 +3427,7 @@ pwIconEls.forEach((el, k) => { iconEls[PW_BASE + k] = el; });
    盒子按 DLG_ITEMS 与玻璃严格重合，syncLabels 每帧写 transform 时
    文字与玻璃是同一个变换（拖动时字跟着一起拉扯，不会两层分离）。 */
 const DLG_TEXT = '这是一段示例文字，用来展示液态玻璃材质在对话框上的表现。'
-               + '对话框本身固定不动，你可以拖动下方的按钮，看看边缘的折射与拉伸如何跟着手指变化。';
+               + '可以拖动下方的按钮，看边缘的折射与拉伸如何变化。';
 const dlgIconEls = DLG_ITEMS.map((it, k) => {
   const el = document.createElement('div');
   el.className = (k === 0) ? 'dlg-box' : 'dlg-btn';
