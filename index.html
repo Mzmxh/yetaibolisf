@@ -7078,9 +7078,16 @@ function thumbStep(dt) {
       if (el.style.left) el.style.left = '';
       if (el.style.top) el.style.top = '';
     } else {
-      el.style.width  = (w * shrink).toFixed(2) + 'px';
+      /* 开关：居中补偿同样以「原始宽度 SW_THUMB_W」为基准（与上方 slider / tabbar 分支同一条式子）。
+         原来用拉长后的 w 算：left = SW_PAD + w(1−shrink)/2 → 中心 = SW_PAD + w/2，
+         w 随 grow 从 34 涨到 44，中心就跟着右移 5px（实测按住时中心从 308 漂到 313）；
+         而拉长的 10px 又被 pad 按 baseX/TRAVEL 全补在右端 —— 两端位移不等，
+         松手后 CSS 行程开启 18px、关闭只剩 8px，玻璃一个猛冲一个轻移（见下方 pad 注释）。
+         改成以 SW_THUMB_W 为基准后中心恒为 SW_PAD + SW_THUMB_W/2，拉长向两侧等分。 */
+      const rwS = w * shrink;
+      el.style.width  = rwS.toFixed(2) + 'px';
       el.style.height = (SW_THUMB_H * shrink).toFixed(2) + 'px';
-      el.style.left   = (SW_PAD + w * (1 - shrink) / 2).toFixed(2) + 'px';
+      el.style.left   = (SW_PAD + (SW_THUMB_W - rwS) / 2).toFixed(2) + 'px';
       el.style.top    = (SW_PAD + SW_THUMB_H * (1 - shrink) / 2).toFixed(2) + 'px';
     }
     /* 后面的滑杆本体（轨道）随玻璃鼓起而缩小 —— 这才是参考图里那个效果。
@@ -7118,9 +7125,13 @@ function thumbStep(dt) {
          补偿改由 left 承担（上方 slider 分支），因为 .sl-thumb 的 transform
          带 .22s 过渡，写进去会被滞后成「沉降末期向前走一下」。
          补满额的话右端会多退 10px，透过玻璃看分界就偏到滑块左边去了。 */
-      const pad = (sceneMode === 'slider' || sceneMode === 'tabbar')
-        ? 0                        // 居中补偿已全部走 left（见上方 slider 分支）
-        : SW_PRESS_GROW * th.grow * (th.baseX / SW_TRAVEL);
+      /* 开关现在也补 0 —— 拉长/缩小的居中补偿已全部交给 left（上方 else 分支改成以
+         SW_THUMB_W 为基准），transform 恒等于 baseX，与滑块 / 标签栏一致。
+         原来按 baseX/TRAVEL 比例补（左端 0、右端满额）：按住时右端被拉回 10px，
+         松手后 CSS 剩下的行程开启 18px、关闭只有 8px；再乘 GLASS_TRAVEL_GAIN 放大，
+         开启方向的玻璃峰值速度实测 258 px/s、关闭只有 89 px/s —— 这就是
+         「开启像撞过去、关闭很自然」的来源。补 0 之后两端行程严格相等。 */
+      const pad = 0;
       /* 滑块场景：位移 = sliderThumbTX（含端点外伸），白块与玻璃同心，
          拖动到边缘时不会再从玻璃后面露出一截半透明白块。 */
       const tx0 = (sceneMode === 'slider')
@@ -7275,23 +7286,35 @@ function thumbStep(dt) {
        [79.67, 234.34]，而实测真实中心是 [75.67, 238.34] ——
        玻璃在两个端点各比框落后 4px，看着就是「没跟到位」。
        开关场景照旧：它的拉长量全补在右端（pad），端点确实要缩。 */
+    /* 开关的端点改用「未拉长的 SW_THUMB_W」且不再减 SW_PRESS_GROW×grow：
+       原来 [cMin, cMax] 随 grow 从 [308, 326] 收缩到 [313, 321]（中心不变、宽度 18 → 8），
+       于是开启方向滑块很快撞到 cMax 被硬夹住 —— 实测 cxCss 一路冲到 334.6 而玻璃
+       钉在 324.2 不动约 150ms，之后才慢慢跟上，看着就是「猛撞到头再沉下去」。
+       窗口固定为 [308, 326] 后：滑块两端正好落在边界，开/关各走满 18px，
+       左右对称，过冲（1.44px）被夹掉也完全无感。 */
     const cMin = (sceneMode === 'slider')
       ? trackLCss
       : (sceneMode === 'tabbar' ? trackLCss + SW_PAD + SW_THUMB_W / 2
-                                : trackLCss + SW_PAD + wNow / 2);
+                                : trackLCss + SW_PAD + SW_THUMB_W / 2);
     const cMax = (sceneMode === 'slider')
       ? trackLCss + SW_TRACK_W
       : (sceneMode === 'tabbar' ? cMin + SW_TRAVEL
-                                : cMin + SW_TRAVEL - SW_PRESS_GROW * th.grow);
+                                : cMin + SW_TRAVEL);
     const cxIn = Math.max(cMin, Math.min(cMax, cxCss));
     /* 滑块场景：玻璃 = 白块中心（外伸已经含在白块位移里），G 保持 1。
        不能再用「按轨道中心放大」—— 行程有 254px，放大 1.8 会让玻璃飞出屏幕
        （实测最左端 cxGlass = −33.6）。
        也不要在这里再加一次 sliderEndOut：白块的 transform 已经是
        sliderThumbTX（含外伸），cxIn 读到的就是外伸后的中心，再加就双加了。 */
+    /* 不再额外压外探。原先那层「外探 × (1 − prog)」是为了压住 G=1.8 时被放大的
+       CSS 过冲（实测冲过端点 7.2px、钉住约 150ms，就是「撞过去」）。
+       现在 GLASS_TRAVEL_GAIN ≤ 1（满浮起 0.8），偏移量恒为
+       (cxIn − 轨道中心) × G ≤ 行程半宽，本来就冲不过端点；
+       留着那层反而会把终点外探从 7.2 拉回 9，左右不对称。 */
+    const Gexp = G;
     const cxGlass = (sceneMode === 'slider')
       ? cxIn
-      : trackCxCss + (cxIn - trackCxCss) * G;
+      : trackCxCss + (cxIn - trackCxCss) * Gexp;
     const raw = th.lift;
     /* 负向过冲（沉过头）在视觉上打折：弹簧需要它才能保持曲线连续，
        但把负值原样作用在尺寸上，玻璃会缩到比原尺寸还小再弹回来 —— 那正是「跳一下」。 */
@@ -8165,7 +8188,13 @@ function applySwGeometry(mode) {
     document.documentElement.style.setProperty('--sw-travel', SW_TRAVEL + 'px');
     GLASS_BASE_W = SW_TRACK_W; GLASS_BASE_H = SW_TRACK_H;
     GLASS_W_SCALE_AT_FULL = 0; GLASS_H_SCALE_AT_FULL = 0.25;
-    GLASS_TRAVEL_GAIN = 1.8;        // 开关轨道短，需要放大才看得出玻璃在跑
+    /* 满浮起时「玻璃行程 / 滑块行程」。
+       曾经取 1.8（放大才看得出玻璃在跑），但轨道只有 56 宽、滑块行程 18，
+       放大后玻璃端部中心距轨道中心 9×1.8 = 16.2px —— 玻璃（56 宽）会整个探出
+       底座外 16.2px，看着就是「伸出左右两边太多」。
+       取 0.8：端部外探回到 9×0.8 = 7.2px、玻璃总行程 14.4px，与放大前一致。
+       玻璃比滑块走得略少一点点（14.4 vs 18），肉眼看不出脱节。 */
+    GLASS_TRAVEL_GAIN = 0.8;
     TEX_TRACK_SHRINK_AT_FULL = 0.28; // 玻璃里折射出的轨道缩到 72%，保持原效果
     TEX_TRACK_X_EXT_AT_FULL = 0;   // 横向不延长（只有标签栏需要）
     THUMB_EDGE_W_MUL = 1;           // 折射厚度：原版，不加厚
