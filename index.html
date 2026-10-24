@@ -576,11 +576,13 @@
     background: #e9edf2;
     box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.06),
                 0 1px 3px rgba(0, 0, 0, 0.14);
-    /* 必须 linear：滑块玻璃的折射纹理里也画着这 4 条轨道，
-       纹理颜色是按同一条 0.30s 线性插值逐帧重画的。
-       这里若用 ease-in-out，DOM 轨道与玻璃折射出的轨道色就会在过渡中途对不上，
-       点击切换那一瞬间玻璃颜色会突跳一下。两边同曲线才能逐帧同步。 */
-    transition: background-color .30s linear;
+    /* 【不再用 CSS 过渡】轨道色现在由 JS 逐帧写（见 swWriteTrackColor），
+       而且写的是和折射纹理完全同一个数 thumbTweenT[i] ——
+       原来 CSS 走 0.30s、纹理走 JS 的 0.30s，两条各自计时，中点会对不上；
+       现在只有一个数、一条时间轴，DOM 与玻璃里折射出的轨道色逐帧严格一致。
+       若保留这条 CSS 过渡，JS 每帧写的值会被它再插值一次（慢半拍且互相拖累），
+       所以必须去掉。点击切换那 0.30s 的渐变由 stepThumbTrackTween 提供，观感不变。 */
+    transition: none;
     pointer-events: none;
   }
   .sw.on .sw-track { background: #34c759; }   /* iOS systemGreen */
@@ -615,7 +617,10 @@
     /* 位移用带过冲的曲线（第二控制点 1.2 > 1 → 滑过去顶一下再坐回，iOS 的弹性）。
        宽度不用 CSS 过渡：拉长必须发生在「上浮之后」（先浮起 → 再变大 → 撞到头变形完成 → 才下沉），
        由 JS 按浮起量逐帧写入，才能和玻璃的放大严格同步且顺序可控。 */
-    transition: transform .30s cubic-bezier(.42, .80, .58, 1.2);
+    /* 时长由 JS 按 SW_TAP_SPEED 反算后写进 --sw-tap-dur：与浮起时间轴、
+       轨道色补间走同一个倍速，白点滑到位和玻璃沉下才会同时结束。
+       曲线（带过冲的 cubic-bezier，第二控制点 1.2）原样不动 —— 倍速不改形状。 */
+    transition: transform var(--sw-tap-dur, .30s) cubic-bezier(.42, .80, .58, 1.2);
     will-change: transform, width;
     pointer-events: none;
   }
@@ -1751,8 +1756,14 @@ function tickPointer(dt) {
      另外只在**时钟页**才烘：放在别的页面就是每分钟白掉几帧，而那些页面根本看不到
      这块玻璃。判断写在调用处而不是函数里 —— 初始化那次调用在 sceneMode 声明之前，
      函数内部直接读 let 会撞 TDZ。 */
-  if (clockT - clockLastCheck > 1) {
-    clockLastCheck = clockT;
+  /* ⚠ 翻页检查必须用**真实时间**，不能用 clockT。
+     clockT 是每帧 dt 累加出来的，而主循环第 8753 行把 dt 钳到 0.033 —— 帧率一旦
+     低于 30fps，clockT 就走得比真实时间慢（沙盒实测 4.4fps：1.5s 真实只推进
+     0.297s，即 0.2 倍速）。于是"每秒检查一次"实际变成好幾秒一次，22:00 到了还
+     停在 21:59。Date.now() 不受帧率、不受钳制、也不受 rAF 被节流的影响。 */
+  const _wallMs = Date.now();
+  if (_wallMs - clockLastCheck > CLK_POLL_MS) {
+    clockLastCheck = _wallMs;
     clockTickSecond();
   }
   // 每帧按**当前**形状重算光斑。
@@ -2974,12 +2985,24 @@ function clockTextNext() {
    ⚠ clkBusy() 的阈值必须比各弹簧自己的「停稳条件」略松，否则两边在阈值附近反复
      打架（刚判静止又判忙），烘焙永远排不上队。 */
 const CLK_DEFER_MAX = 20;      // 秒：连续忙这么久就强行烘一次，保证时间不会一直错
+const CLK_POLL_MS  = 250;      // 毫秒：多久查一次时间（真实时间）。250ms → 最坏滞后 0.25s
+const CLK_IDLE_MS  = 600;      // 毫秒：手上最后一次交互之后要静多久，才允许现场烘
 let clockPending = false;      // 有新文本待烘（还没轮到）
-let clockPendAt  = 0;          // 挂起时刻（clockT）
+let clockPendAt  = 0;          // 挂起时刻（真实秒）
 let clkNext      = null;       // 预烘好的下一分钟：{ text, tex }
 
 let clockTexText = '';
-let clockLastCheck = -1e9;   // 上次检查时间的 clockT（初值极小 → 首帧必定刷一次）
+let clockLastCheck = 0;        // 上次检查时间的**真实**毫秒（0 → 首帧必定刷一次）
+/* 最后一次用户交互的时刻。烘焙要几百毫秒，撞在滑动/拖动上就是一次可见的掉帧；
+   clkBusy() 只认页面自己那几套弹簧，认不出「手指正在划目录列表」这类外部滚动，
+   所以再补一层通用的静默判定。 */
+let _lastInteractAt = -1e9;
+['pointerdown', 'pointermove', 'touchstart', 'touchmove', 'wheel', 'keydown'].forEach(ev => {
+  window.addEventListener(ev, () => { _lastInteractAt = performance.now(); }, { passive: true, capture: true });
+});
+document.addEventListener('scroll', () => { _lastInteractAt = performance.now(); }, { passive: true, capture: true });
+/* 目录页打开的时刻：刚打开那 0.38s 正在做位移过渡，此刻烘焙会把过渡卡出可见的顿挫。 */
+let _menuOpenAt = 0;
 
 /* 「手上正有事」：拖背景 / 惯性滑行 / 拖玻璃 / 手指按着 / 任意一块玻璃还在弹。 */
 function clkBusy() {
@@ -2997,6 +3020,16 @@ function clkBusy() {
   return false;
 }
 
+/* 「可以现场烘了吗」= 页面自己的动画都停了 **且** 手上已经静了一会儿。
+   后一半是为了目录页：目录列表本身可滚动（overflow-y:auto），clkBusy() 只认页面
+   自己那几套弹簧，认不出「手指正在划列表」，此时烘焙会把列表惯性卡出可见的顿挫。 */
+function clkIdleEnough() {
+  if (clkBusy()) return false;
+  /* 目录刚打开那 0.38s 正在位移过渡，此刻烘焙会把过渡卡一下。 */
+  if (menuOpen && performance.now() - _menuOpenAt < 300) return false;
+  return performance.now() - _lastInteractAt > CLK_IDLE_MS;
+}
+
 /* 换贴。tex 是现成的（预烘好的或刚烘好的），所以这里零烘焙。 */
 function clockAdopt(t, tex) {
   const old = clockGlass.maskTex;
@@ -3012,24 +3045,42 @@ function clockAdopt(t, tex) {
 }
 
 /* 现场烘一张（唯一会卡顿的地方）。调用方必须保证此刻不忙 —— 初始化 / 进时钟页 /
-   兜底补烘，这三处画面上都没有正在动的东西。 */
+   兜底补烘，这三处画面上都没有正在动的东西。
+   ⚠ 关键：文本是在**烘焙开始前**读的，而烘焙要几百毫秒（沙盒实测 567ms，真机
+   也是百毫秒量级）。若这一分钟正好在这段窗口里翻过去（命中概率 ≈ 烘焙时长/60s，
+   约 1%），烘出来的就是上一分钟，采用后会「22:00 了还显示 21:59」，而且得等下一次
+   翻页检查才纠正 —— 就是用户看到的「偶尔延迟 / 显示上一分钟」。
+   所以烘完必须复核：跨分钟了就丢掉这张重烘。若预烘池里正好有翻过去后那一分钟的
+   纹理（典型情况：烘焙期间从 21:59 跨到 22:00，而 22:00 早就预烘好了），直接换贴，
+   连第二次烘焙都省了。 */
 function updateClockText() {
-  const t = clockTextNow();
-  if (t === clockTexText && clockGlass.maskTex) return;
-  let tex = null;
-  try {
-    /* 圆角半径：CSS px → 设备 px（× SCALE）→ 超采样网格单位（× ss）。 */
-    tex = makeTextSDF(t, CLK_FONT, CLK_W, CLK_H, CLK_MAXD, CLK_FONT_STACK, CLK_SS, CLK_WEIGHT, CLK_BOLD,
-      CLK_ROUND_OPEN * SCALE * CLK_SS, CLK_ROUND_CLOSE * SCALE * CLK_SS, CLK_GAP);
-  } catch (e) {
-    return;    // 烘不出来就维持现状，不能让玻璃变回方块
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const t = clockTextNow();
+    if (t === clockTexText && clockGlass.maskTex) return;
+    /* 预烘池里正好有这张 → 零烘焙换贴。 */
+    if (clkNext && clkNext.text === t) { clockAdopt(t, clkNext.tex); clkNext = null; return; }
+    let tex = null;
+    try {
+      /* 圆角半径：CSS px → 设备 px（× SCALE）→ 超采样网格单位（× ss）。 */
+      tex = makeTextSDF(t, CLK_FONT, CLK_W, CLK_H, CLK_MAXD, CLK_FONT_STACK, CLK_SS, CLK_WEIGHT, CLK_BOLD,
+        CLK_ROUND_OPEN * SCALE * CLK_SS, CLK_ROUND_CLOSE * SCALE * CLK_SS, CLK_GAP);
+    } catch (e) {
+      return;    // 烘不出来就维持现状，不能让玻璃变回方块
+    }
+    if (clockTextNow() === t) { clockAdopt(t, tex); return; }
+    /* 跨分钟了：这张已经过期（烘的是刚过去那一分钟），丢掉重来。 */
+    tex.dispose();
   }
-  clockAdopt(t, tex);
+  /* 两次都跨分钟（只可能在烘焙慢到几十秒时发生）：不采用任何一张，交给下一轮检查。 */
 }
 
-/* 每秒一次的翻页调度。真正烘焙只可能发生在 clkBusy() 为 false 的那一刻。 */
+/* 翻页调度（主循环按真实时间每 CLK_POLL_MS 调一次）。真正烘焙只可能发生在
+   clkIdleEnough() 为 true 的那一刻 —— 拖背景 / 惯性 / 弹动 / 刚交互过，统统不烘。 */
 function clockTickSecond() {
-  if (sceneMode !== 'clock') { clockPending = false; return; }   // 离开时钟页：丢掉待烘
+  /* 别的场景一律不烘（那些页面看不到这块玻璃，每分钟白掉几帧）。
+     但**目录页**要烘 —— 见下面「进场零延迟」。 */
+  if (sceneMode !== 'clock' && !menuOpen) { clockPending = false; return; }
+  const nowS = Date.now() / 1000;
   const want = clockTextNow();
   if (want !== clockTexText) {
     if (clkNext && clkNext.text === want) {
@@ -3037,11 +3088,11 @@ function clockTickSecond() {
       clkNext = null;
       clockPending = false;
     } else if (!clockPending) {
-      clockPending = true; clockPendAt = clockT;   // ②没预烘成：挂起，等空闲
+      clockPending = true; clockPendAt = nowS;   // ②没预烘成：挂起，等空闲
     }
   }
   /* ②补烘：忙完了再烘；真的一直忙（CLK_DEFER_MAX）就强行烘一次，保证时间不错。 */
-  if (clockPending && (!clkBusy() || clockT - clockPendAt > CLK_DEFER_MAX)) {
+  if (clockPending && (clkIdleEnough() || nowS - clockPendAt > CLK_DEFER_MAX)) {
     clockPending = false;
     updateClockText();
   }
@@ -3049,7 +3100,7 @@ function clockTickSecond() {
   const nx = clockTextNext();
   if (nx) {
     if (clkNext && clkNext.text !== nx) { clkNext.tex.dispose(); clkNext = null; }
-    if (!clkNext && nx !== clockTexText && !clockPending && !clkBusy()) {
+    if (!clkNext && nx !== clockTexText && !clockPending && clkIdleEnough()) {
       try {
         const tex = makeTextSDF(nx, CLK_FONT, CLK_W, CLK_H, CLK_MAXD, CLK_FONT_STACK, CLK_SS, CLK_WEIGHT, CLK_BOLD,
           CLK_ROUND_OPEN * SCALE * CLK_SS, CLK_ROUND_CLOSE * SCALE * CLK_SS, CLK_GAP);
@@ -3059,6 +3110,13 @@ function clockTickSecond() {
   }
 }
 updateClockText();
+
+/* 切到后台再回来：rAF 在后台是停的。既然翻页检查已经改用真实时间，只要让它在回来
+   的第一帧就查一次即可 —— 否则要等最多 CLK_POLL_MS；而且若离开期间跨了分钟，
+   显示的就是离开前那一分钟。 */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') clockLastCheck = 0;
+});
 
 function ccSheetOn() { return sceneMode === 'control'; }
 
@@ -3244,6 +3302,14 @@ let swRowY = SW_Y;
 let SW_PAD_Y = 0;
 const SW_TRACK_OFF = '#e9edf2';   // 关：iOS 的浅灰白轨道
 const SW_TRACK_ON  = '#34c759';   // 开：iOS systemGreen
+/* 拖动时轨道色实时跟手：进度 = 滑块位置 / 行程，0 = 白（关）、1 = 绿（开），
+   不用等松手 —— 往左拖就变白、往右拖就变绿。
+   缓动 SW_COLOR_EASE：
+     1 = smoothstep —— 两端是干净的白 / 绿，变色集中在中间那段，
+         手指刚离开端点时颜色几乎不动，滑过中段才明显转色（iOS 那种手感）；
+     0 = 严格线性 —— 一动就开始变色，t=0.5 时是最"脏"的灰绿。
+   中间值连续过渡，想更"灵敏"就往下调。 */
+const SW_COLOR_EASE = 1;
 /* 滑块场景的轨道配色：已走过的左侧亮蓝，未走过的右侧淡蓝（与 .sl-track / .sl-fill 同色）。 */
 /* 未走过那段改成半透明：能透出底下的背景，而不是一块死板的纯色。
    只用于滑块场景（2876 行在 sceneMode==='slider' 分支内），开关场景走 TRACK_OFF/ON，不受影响。 */
@@ -5911,6 +5977,20 @@ const THUMB_C_FREE = 19.1;    // （已停用）
 const LIFT_RISE_MS = 240;
 const LIFT_HOLD_MS = 0;      // 顶点不再停留：到顶立刻开始下沉
 const LIFT_FALL_MS = 340;
+/* ---- 点击动画「倍速」----
+   只压缩时间轴，不改任何 easing 曲线 / 刚度 / 阻尼 —— 就是录像倍速播放：
+   三段 lift 是纯时间轴（tp += dtMs，没有积分），所以把喂进去的 dt 乘一个
+   倍数，得到的正是同一条曲线按倍速播放：形状逐点不变，过冲、顶点、归位
+   全都原样保留，只是整段变短。
+   ⚠ 为什么不动刚度：改 SW_JELLY_K / C 会改变 ζ 与过冲量（观感变了），
+     而且显式欧拉在高刚度下有发散风险（Jury 判据，见 SW_JELLY_SUB 注释）。
+     改 LIFT_*_MS 本身则是改「各段的时长比例」，三段节奏会各走各的。
+     只有乘 dt 这一条路是严格意义上的倍速。
+   稳定性：时间轴无积分，任何倍速都不会发散；果冻弹簧走 1/240 固定子步，
+   倍速只是多跑几个子步，结果与倍速前逐值一致（已实测）。 */
+const SW_TAP_SPEED = 1.6;
+/* 只对开关场景生效：滑块 / 标签栏共用同一条时间轴，不跟着变速。 */
+document.documentElement.style.setProperty('--sw-tap-dur', (0.30 / SW_TAP_SPEED).toFixed(4) + 's');
 /* grow = lift^POW。POW>1 → 前段 grow 远小于 lift（只浮起、尺寸几乎不动），
    后段才快速鼓起，且 lift 到 1 时 grow 同时到 1 = "撞到头刚好完成变形"。 */
 const LIFT_GROW_POW = 1.6;
@@ -6004,6 +6084,32 @@ const mixRGB = (a, b, t) => 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ','
                                   + Math.round(a[1] + (b[1] - a[1]) * t) + ','
                                   + Math.round(a[2] + (b[2] - a[2]) * t) + ')';
 
+/* 拖动进度 → 颜色进度 的缓动（SW_COLOR_EASE：0 线性 / 1 smoothstep）。 */
+function swTrackEase(t) {
+  t = Math.max(0, Math.min(1, t));
+  const e = Math.max(0, Math.min(1, SW_COLOR_EASE));
+  if (e <= 0) return t;
+  const s = t * t * (3 - 2 * t);                 // smoothstep
+  return t + (s - t) * e;
+}
+/* DOM 轨道是**平铺实色**，纹理里是 TRACK_OFF→TRACK_ON 的斜向渐变。
+   取渐变两端的平均值，DOM 才与玻璃里折射出的轨道色严格同一个数
+   （t=0 → rgb(233,237,242) = #e9edf2，与 CSS 的 SW_TRACK_OFF 完全一致）。 */
+function swTrackDomColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  let r = 0, g = 0, b = 0;
+  for (let k = 0; k < 2; k++) {
+    r += TRACK_OFF[k][0] + (TRACK_ON[k][0] - TRACK_OFF[k][0]) * t;
+    g += TRACK_OFF[k][1] + (TRACK_ON[k][1] - TRACK_OFF[k][1]) * t;
+    b += TRACK_OFF[k][2] + (TRACK_ON[k][2] - TRACK_OFF[k][2]) * t;
+  }
+  return 'rgb(' + Math.round(r / 2) + ',' + Math.round(g / 2) + ',' + Math.round(b / 2) + ')';
+}
+/* 拖动中的实时进度（null = 不在拖，交给 0.30s 补间）。 */
+let swTrackLiveT = [];
+/* 上次写进 DOM 的量化值：只在真的变了才动样式，避免每帧写一次触发无谓的样式重算。 */
+let swTrackColorQ = [];
+
 /* 本体缩放（grow）变化检测：只要有一个开关的 grow 动了，折射纹理就要重画，
    否则玻璃里透出的轨道尺寸停留在上一帧。返回是否需要重画。 */
 let thumbShrinkPrev = null;
@@ -6037,16 +6143,39 @@ function stepThumbTrackTween(dt) {
   for (let i = 0; i < SWITCH_ROWS.length; i++) {
     const target = SWITCH_ROWS[i].on ? 1 : 0;
     let cur = thumbTweenT[i];
-    if (cur === undefined) { thumbTweenT[i] = target; continue; }
-    if (Math.abs(cur - target) < 0.002) {
+    /* 拖动中：进度直接取滑块位置，不走时间补间 —— 手指在哪里轨道就是哪个色，
+       往左拖变白、往右拖变绿。松手时 swTrackLiveT[i] 置空，才从这里接着补到目标。 */
+    const live = swTrackLiveT[i];
+    if (live != null) {
+      const v = swTrackEase(live);
+      if (cur === undefined || Math.abs(cur - v) > 0.0005) { thumbTweenT[i] = v; dirty = true; }
+    } else if (cur === undefined) {
+      thumbTweenT[i] = target;                 // 首帧 / 切场景：直接落到目标色，不渐变
+    } else if (Math.abs(cur - target) < 0.002) {
       if (cur !== target) { thumbTweenT[i] = target; dirty = true; }
-      continue;
+    } else {
+      const d = dt * SW_TAP_SPEED / 0.30;      // 0.30s 线性 ÷ 倍速（本函数只在开关场景跑）
+      cur = target > cur ? Math.min(target, cur + d) : Math.max(target, cur - d);
+      thumbTweenT[i] = cur; dirty = true;
     }
-    const d = dt / 0.30;                       // 与 CSS 的 .30s 同步
-    thumbTweenT[i] = target > cur ? Math.min(target, cur + d) : Math.max(target, cur - d);
-    dirty = true;
+    swTrackWriteDom(i);
   }
   return dirty;
+}
+
+/* 把当前进度写进 DOM 轨道的实色。
+   与纹理共用同一个 thumbTweenT[i]：DOM 看到什么色，玻璃折射出来的就是什么色。
+   只在开关场景生效 —— 滑块 / 标签栏的 .sl-track / 标签栏条另有自己的配色，不能串。 */
+function swTrackWriteDom(i) {
+  if (sceneMode !== 'switches') return;
+  const els = switchEls[i];
+  if (!els || !els.track) return;
+  const v = thumbTweenT[i];
+  if (v === undefined) return;
+  const q = Math.round(v * 1000);
+  if (swTrackColorQ[i] === q) return;
+  swTrackColorQ[i] = q;
+  els.track.style.backgroundColor = swTrackDomColor(v);
 }
 
 /* 纹理里「标签栏那条」的高斯模糊半径（设备像素）：直接取 glasses[7].blur（12），与外面那条一致，不会各改各的。
@@ -6974,7 +7103,10 @@ function thumbStep(dt) {
      否则玻璃里透出来的还是没缩的大轨道。 */
   if (stepThumbShrinkTween()) thumbTexDirty = true;
   // ---- 浮起时间轴（替代原双刚度弹簧）----
-  const dtMs = dt * 1000;
+  /* 倍速：只把喂进时间轴的 dt 乘一个倍数（曲线原样，只是走得快）。
+     仅开关场景 —— 滑块 / 标签栏共用 swThumbs 与同一条时间轴，保持原速。 */
+  const tapSpd = (sceneMode === 'switches') ? SW_TAP_SPEED : 1;
+  const dtMs = dt * 1000 * tapSpd;
   for (const th of swThumbs) {
     /* 原来用弹簧：按住 K=420 / 松开 K=240，松手瞬间刚度突变，
        加上 mustRise 中途把目标从 1 改成 0 —— 加速度两次跳变，
@@ -7021,7 +7153,7 @@ function thumbStep(dt) {
     /* 固定 1/240s 子步积分：这组刚度/阻尼配显式欧拉，在 dt=1/30 时会发散
        （Jury 判据 1+Tr+Det = -0.65 < 0），只有 60fps 才稳定 —— 掉帧就会炸。
        子步之后低帧率下的行为与 60fps 完全一致。 */
-    let jelRem = dt;
+    let jelRem = dt * tapSpd;      // 同倍速；子步仍固定 1/240，只是多跑几步
     while (jelRem > 1e-6) {
       const hj = Math.min(SW_JELLY_SUB, jelRem);
       jelRem -= hj;
@@ -7445,6 +7577,7 @@ function showMenu() {
   menuOpen = true;
   document.body.classList.add('menu-open');
   menuPageEl.setAttribute('aria-hidden', 'false');
+  _menuOpenAt = performance.now();   // 目录页打开时刻：烘焙要等这 0.38s 过渡走完
 }
 function showScene(mode) {
   if (!menuOpen) return;
@@ -8299,6 +8432,7 @@ switchEls.forEach(({ sw }, i) => {
     // 上一次点击若还在「延迟松手」里，这里重新按住 → 取消它，重新计时
     clearTimeout(swReleaseTimer[i]); swReleaseTimer[i] = 0;
     swThumbs[i].baseX = curX;      // 按住期间的位移基准（拖拽时被 curX 覆盖）
+    swTrackLiveT[i] = null;        // 新一次按下：先按状态色，越过拖动容差才交给手指
     swPressT0[i] = performance.now();
     sw.classList.add('press');
     // 滑块浮起：liftHeld 一置起来，弹簧就把 lift 推到 1。
@@ -8324,6 +8458,9 @@ switchEls.forEach(({ sw }, i) => {
     curX = Math.max(0, Math.min(SW_TRAVEL, curX + dx));
     sx = e.clientX;
     swThumbs[i].baseX = curX;
+    /* 轨道色实时跟手：进度 = 滑块位置 / 行程。松手前就变色，不用等状态落定。
+       夹在 [0,1] 内（curX 已被 clamp），拖到底就是纯白 / 纯绿。 */
+    swTrackLiveT[i] = SW_TRAVEL > 0 ? Math.max(0, Math.min(1, curX / SW_TRAVEL)) : 0;
     /* 撞到端点不再触发专门的冲量 —— 形变现在全程由拖动速度驱动，
        顶到头只是「速度刚好归零」，弹簧自然收一下，不会额外抖一大下。 */
   });
@@ -8337,6 +8474,9 @@ switchEls.forEach(({ sw }, i) => {
        （轨道颜色马上渐变、aria 马上更新）也不会让滑块提前滑走 ——
        等「真松手」那一刻清掉内联 transform，才交回 CSS 弹性滑到目标位。 */
     swSetState(i, target);            // 先定状态
+    /* 交回补间：从手指离开那一刻的颜色，用 0.30s 线性补到目标色。
+       拖动时颜色已经跟到了 swTrackEase(curX/行程)，所以这一步是连续的、不会跳。 */
+    swTrackLiveT[i] = null;
     const waited = performance.now() - swPressT0[i];
     const wait = wasDrag ? 0 : Math.max(0, SW_MIN_PRESS_MS - waited);
     clearTimeout(swReleaseTimer[i]);
