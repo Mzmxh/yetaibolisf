@@ -248,17 +248,28 @@
      δₖ 由 σ² 可加反推：δₖ = M·√[(1−(k−1)/N)² − (1−k/N)²]。
      只在模糊场景随 .blur-panel 一起 display，其它场景零开销。
      pointer-events:none —— 带子盖在屏幕中间，若吃掉事件，中间就拖不动背景了。 */
-  .pb { position: absolute; left: 0; right: 0; top: 37%; height: 26%; pointer-events: none; }
+  /* 降分辨率档位：把带子放大 1/s 再 scale(s) 缩回原位，视觉尺寸不变，但浏览器
+     是在 1/s 的小尺寸上光栅化与求 backdrop，像素数降到 s²（0.5 → 四分之一）。
+     transform-origin 必须是 top left，否则 scale 会以中心为原点，带子会往上跑。
+     will-change 让它单独成层，按缩放后的 raster scale 光栅化而不是全分辨率。 */
+  .pb { position: absolute; left: 0; top: 37%; width: 100%; height: 26%;
+    pointer-events: none; transform-origin: top left; will-change: transform; }
   /* 带内的一层白：与 σ(y)=M(1−y) 同分布（顶满、底 0），所以底边不会突然出现
      一条白边；均匀铺白的话底边会露硬边，因为那里模糊已经归 0 了。
      伪元素在所有 <i> 之后渲染，天然叠在最上层。--w 由 JS 按 PB_WHITE 写入。 */
   .pb::after { content: ''; position: absolute; inset: 0; pointer-events: none;
     background: linear-gradient(to bottom,
       rgba(255,255,255,var(--w,0.10)), rgba(255,255,255,0)); }
-  .pb i { position: absolute; inset: 0; display: block;
+  /* 每层只铺它真正贡献的那一截：--h = k/N。第 k 层的遮罩在 y > k/N 处 alpha 恒为 0，
+     那一截算完也是全透明 —— 原来 inset:0 等于每层都把整条带子模糊一遍，白烧掉
+     46.9% 的像素（面积从 16·H 降到 8.5·H）。因为渐变结束正好是元素自己的底边，
+     不用再传 --e。曾经担心卷积核读不到边界外的像素、特意留过 4%~8% 的余量，实测
+     反而更差：Chromium 的 backdrop-filter 会读元素边界外的 backdrop，不留量时与
+     inset:0 逐像素差 ≤2/255，留了反倒多出 10~12 的差。 */
+  .pb i { position: absolute; left: 0; right: 0; top: 0; height: var(--h); display: block;
     backdrop-filter: blur(var(--b)); -webkit-backdrop-filter: blur(var(--b));
-    mask-image: linear-gradient(to bottom, #000 var(--s), transparent var(--e));
-    -webkit-mask-image: linear-gradient(to bottom, #000 var(--s), transparent var(--e)); }
+    mask-image: linear-gradient(to bottom, #000 var(--s), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 var(--s), transparent 100%); }
   /* 密码键的文字层：与玻璃严格同尺寸的透明盒，只画数字 + 字母。
      盒子位置尺寸由 JS 按 PW_ITEMS 写成与玻璃重合，每帧由 syncLabels 写
      transform 跟随果冻形变（与控制中心图标同一套机制）。
@@ -3946,25 +3957,72 @@ const blurPanelEl = document.getElementById('blurPanel');
    挤进更短的距离，过渡会变突兀。现高度 26%（219px）配 M=8，与原来 44% 配 13
    的陡度一致（0.0365 σ/px）。带子高度改了就把 M 按同比例调。
    觉得不够糊就把 PB_M 往上调。只在初始化时建一次 16 个 div，之后不再动。 */
-const PB_N = 16;
+const PB_N = 16;                                 // 层数固定，不再随帧率减
 const PB_M = 8;
+/* 带子高度（%）。JS 降分辨率时要按它放大，必须与 CSS .pb 的 height 同值 —— 改一处
+   就得改另一处，否则带子会被 scale 拉跑。 */
+const PB_H = 26;
 /* 带内那层白的峰值 alpha（行内样式写入 --w）。背景是深蓝底，0.10 是"透得出
    背景的白玻璃"而不是糊上去的白块；嫌不够白往上加，盖住背景了就降回 0.06。 */
 const PB_WHITE = 0.10;
-(function buildPb() {
-  const host = document.getElementById('pbEl');
+/* 起始分辨率档位：DPR 越高，同样的视觉尺寸摊到的设备像素越多，blur 越贵。
+   这里先用 DPR 粗调一档（手机上常见的 3x 直接从 1.0 降到 0.75），剩下的交给
+   下面的帧率采样精调 —— 静态判断只能粗筛，真实性能还得看实测帧率。
+   降的是分辨率不是层数：层数一少，σ(y)=M(1−y) 的级联近似就变糙，顶部的糊度会
+   打折；降分辨率只让画面软一点，梯度和顶部糊度都还在。 */
+const PB_S_STEPS = [1, 0.75, 0.5];
+let pbS = (window.devicePixelRatio || 1) >= 2.5 ? 0.75 : 1;
+let pbHost = null;
+function buildPb() {
+  const host = pbHost || (pbHost = document.getElementById('pbEl'));
   if (!host) return;
+  const s = pbS, N = PB_N, h = [];
+  /* 放大 1/s 再 scale(s) 缩回原位：视觉尺寸不变，光栅化面积降到 s²。
+     transform-origin 在 CSS 里设成 top left，所以左上角不动、带子不移位。 */
+  host.style.width  = (100 / s).toFixed(3) + '%';
+  host.style.height = (PB_H / s).toFixed(3) + '%';
+  host.style.transform = 'scale(' + s + ')';
   host.style.setProperty('--w', PB_WHITE);
-  const h = [];
-  for (let j = 0; j < PB_N; j++) {
-    const k = PB_N - j;                                  // j=0 最深（δ 最小、覆盖范围最大），先渲染
-    const s = ((k - 1) / PB_N) * 100;                    // 遮罩平顶结束 %
-    const e = (k / PB_N) * 100;                          // 完全透明 %
-    const d = PB_M * Math.sqrt(Math.max((1 - (k - 1) / PB_N) ** 2 - (1 - k / PB_N) ** 2, 0));
-    h.push('<i style="--b:' + d.toFixed(2) + 'px;--s:' + s.toFixed(2) + '%;--e:' + e.toFixed(2) + '%"></i>');
+  for (let k = N; k >= 1; k--) {            // k=N 最深（δ 最小、覆盖最广），先渲染
+    /* δ 除以 s：backdrop-filter 的半径按元素本地 CSS px 解释，元素本地是 1/s 小
+       尺寸，写 δ/s 再被 scale(s) 放大，视觉半径正好回到 δ。 */
+    const d = PB_M * Math.sqrt(Math.max((1 - (k - 1) / N) ** 2 - (1 - k / N) ** 2, 0)) / s;
+    /* 元素铺到 k/N 就停（见 .pb i 的说明）；遮罩平顶结束在 (k−1)/N，
+       换算到元素自身坐标系是 (k−1)/k，渐变到元素底边（100%）归零。
+       两个百分比都是相对元素自身，缩放后比例不变，不用换算。 */
+    h.push('<i style="--b:' + d.toFixed(2) + 'px;--h:' + (k / N * 100).toFixed(2)
+      + '%;--s:' + ((k - 1) / k * 100).toFixed(2) + '%"></i>');
   }
   host.innerHTML = h.join('');
-})();
+}
+buildPb();
+
+/* ===== 渐变模糊的帧率自适应 =====
+   backdrop-filter 的成本 ≈ 模糊像素面积 × 层数。层数不动（16），这里降的是分辨率：
+   实测帧率掉下去就把带子按 PB_S_STEPS 降一档（1 → 0.75 → 0.5），重建一次 DOM 即可。
+   面积降到 s²，0.5 档只剩四分之一 —— 比减层划算，因为减层会让级联近似变糙、
+   顶部糊度打折，降分辨率只是画面软一点，σ(y)=M(1−y) 的梯度照旧。
+   只在模糊场景采样，其它场景连一个分支都不多走；降级也只改这个页面的 16 个 div，
+   玻璃、手势、其它页面一律不受影响。嫌降级太敏感就把 PB_FPS_MIN 往下调。 */
+const PB_FPS_MIN = 45;
+const PB_FPS_WIN = 500;                          // 采样窗口（ms）
+let pbT0 = 0, pbFrames = 0;
+function pbSample(now) {
+  if (!pbT0) { pbT0 = now; pbFrames = 0; return; }
+  pbFrames++;
+  /* 按**时间**开窗，不按帧数：帧数窗口在掉帧时会被拉长（20fps 下 30 帧要 1.5s），
+     降级要等一两秒才发生，正好是刚进页面最卡的那一两秒。时间窗口无论快慢都是
+     0.5s 判一次，从 1 降到 0.5 最多 1s。 */
+  const el = now - pbT0;
+  if (el < PB_FPS_WIN) return;
+  const fps = pbFrames * 1000 / el;
+  pbT0 = now; pbFrames = 0;
+  if (fps < PB_FPS_MIN) {
+    const i = PB_S_STEPS.indexOf(pbS);
+    const nxt = PB_S_STEPS[Math.min(PB_S_STEPS.length - 1, (i < 0 ? 0 : i) + 1)];
+    if (nxt !== pbS) { pbS = nxt; buildPb(); }
+  }
+}
 const ccIconEls = CC_ITEMS.map(it => {
   const el = document.createElement('div');
   const isMedia = (it[0] === 'media');
@@ -8056,6 +8114,9 @@ window.addEventListener('load', () => {
        而且它带 preserveDrawingBuffer:true，驱动每帧还要额外保留整块缓冲。
        这正是「静止整帧跳过」收益有限的原因：主画布跳过了，这块却一直在画。 */
     if (menuOpen || (now - _menuCloseAt) < 450) safeRenderMenu();
+    /* 渐变模糊的帧率采样：只有模糊场景计，离开就清零 —— 否则下次进来时
+       now − pbT0 是一段离开期间的时间，会算出一个假的极低帧率、误触发降级。 */
+    if (sceneMode === 'blur') pbSample(now); else pbT0 = 0;
     requestAnimationFrame(loop);
   })(performance.now());
 });
