@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>液态玻璃目录 · 展示 1</title>
+<title>液态玻璃 · 展示 </title>
 <style>
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -56,8 +56,15 @@
     border-radius: var(--phone-radius); overflow: hidden; }
   .scene-ui    { position: absolute; inset: 0;
     border-radius: var(--phone-radius); overflow: hidden; }
+  /* 顶栏浮在场景内容之上：两者都在 .phone-ui 里、默认按文档顺序排，
+     顶栏在前 → 内容在后 → 内容盖住顶栏，提一层级让图标始终可见。 */
+  #topbarUi { z-index: 2; }
+  #sceneUi  { z-index: 1; }
   .scene-layer, .scene-ui {
-    transition: transform .38s cubic-bezier(.32, .72, 0, 1);
+    /* 翻页动画时长由设置页的「过渡动画倍速」写入 --ui-dur（见 applyUiSpeed）：
+       0.38s / 倍速。关掉「过渡动画」时写成 0.01s（瞬时）。
+       曲线原样不动 —— 倍速只压缩时间轴，不换形状。 */
+    transition: transform var(--ui-dur, .38s) cubic-bezier(.32, .72, 0, 1);
     will-change: transform;
   }
   /* 主页面（默认）：场景停在屏幕右侧外 */
@@ -245,6 +252,188 @@
     pointer-events: none;
   }
   body.scene-blur .blur-panel { display: block; }
+  /* ===== 「其他」分类：设置 / 关于 =====
+     与模糊 / 时钟同一套「干净底板」思路，但多三处不同：
+       ① 底部「选择图片」整块去掉（DOM 见下面 .pick-wrap，玻璃那块由
+          setSceneMode 里的 g.pick 分支摘掉 —— 只藏 DOM 不够，WebGL 里那块
+          玻璃还在，会留一个空玻璃浮在白底上）；
+       ② 背景全白（不画流体背景，见 plainBgOn / whiteBgTex）；
+       ③ 顶栏图标转深色 —— 原来是给深色流体背景设计的浅色图标 + 深色投影，
+          直接放到白底上等于隐形。 */
+  .settings-panel, .about-panel {
+    position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+    display: none;
+    pointer-events: none;
+  }
+  body.scene-settings .settings-panel { display: block; }
+  body.scene-about    .about-panel    { display: block; }
+  body.scene-about .pick-wrap { display: none; }
+  /* 设置页：底部复用「选择图片」那块玻璃（glasses[6]，260×52 @ y762）当
+     「恢复默认」按钮 —— 尺寸、位置、玻璃材质、按下浮起的反馈全自动继承，
+     不用另造一块玻璃（见 setSceneMode 里的 g.pick 分支与 restoreDefaults）。
+     白底上白字等于隐形，所以文字转深色。
+     命中层留着（它是「按下浮起」反馈的入口），但点击行为要改：
+     <label for> 会原生转发给 fileInput，见 pickHitEl 的 click 拦截。 */
+  body.scene-settings .pick-btn {
+    color: #111;
+    text-shadow: 0 1px 6px rgba(255, 255, 255, 0.9);
+  }
+  /* 卡片可滚到底，底部要让开这块按钮（260×52 @ bottom:56），否则滚到最底会压住它 */
+  body.scene-settings .st-scroll { padding-bottom: 104px; }
+  /* 白底：外框底色必须跟着走 —— 见 .phone 那条注释，这层只补圆角抗锯齿露出的
+     半像素缝，写深了四个角会显出深色弧线。 */
+  body.scene-settings .phone, body.scene-about .phone { background: #fff; }
+  body.scene-settings .back-btn,  body.scene-about .back-btn,
+  body.scene-settings .theme-btn, body.scene-about .theme-btn {
+    color: #111;
+    filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.75));
+  }
+  /* ===== 设置页内容：iOS「设置」式分组卡片 =====
+     底板是纯白的，卡片也是白 —— 只能靠淡阴影 + 细分隔线分层，否则看不出边界。
+     整块可上下滚（内容超出一屏时），滚动条隐藏。 */
+  .st-scroll {
+    position: absolute; left: 0; right: 0; top: 92px; bottom: 0;
+    padding: 0 20px 28px;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    pointer-events: auto;        /* 面板整层 none，这一层要能点能滚 */
+    touch-action: pan-y;
+    scrollbar-width: none;
+  }
+  .st-scroll::-webkit-scrollbar { display: none; }
+  /* 关于页：与设置页同一套容器，内容区从 y=92 起（顶栏之下）。
+     不再往画布里补画那截被裁掉的文字 —— 那一份是 DOM 之外的「第二份内容」，
+     对不齐就出重影、慢一帧就闪。这一页只保留 DOM 这一份。 */
+  /* 顶部不再有硬边：容器顶边抬到 0（内容可以滚过顶栏区），
+     首屏位置不变靠 padding-top:92 顶住 —— 与原来 top:92 视觉上完全一致。
+     只挪容器边界，不新增第二份内容，所以不可能重影 / 慢帧 / 错位。
+     顶栏图标（.topbar z5）压在内容（#sceneUi z1）之上，始终可见。 */
+  /* 关于页不额外加任何东西：内容与设置页共用 .st-scroll（top:92），
+     顶栏区不再有任何覆盖层、不再往画布里补画第二份文字。 */
+  /* ===== 关于页内容 =====
+     与设置页共用 .st-scroll / .st-card 那套容器；这页没有底部按钮，
+     所以不用让出那 104px。链接行要能点：面板整层是 pointer-events:none，
+     但 .st-scroll 那层是 auto，子元素继承下来即可。 */
+  .ab-title {
+    font-size: 28px; font-weight: 700; color: #111; letter-spacing: .3px;
+    margin: 2px 0 6px 4px;
+    user-select: none; -webkit-user-select: none;
+  }
+  .ab-para {
+    font-size: 14px; line-height: 1.78; color: #333; letter-spacing: .2px;
+    padding: 14px 16px 16px; text-align: justify;
+  }
+  .ab-row { height: auto; padding: 13px 16px; }
+  .ab-maker { font-size: 15px; color: #111; line-height: 1.6; }
+  .ab-maker b { font-weight: 600; }
+  .ab-link {
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 12px 16px; text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .18s ease;
+  }
+  .ab-link:active { background: rgba(0, 0, 0, .06); }
+  .ab-url { font-size: 13px; color: #0a7cff; word-break: break-all; }
+  .ab-hint {
+    font-size: 12px; color: #8a8f98; margin: 8px 4px 0; line-height: 1.5;
+  }
+  .st-group-title {
+    font-size: 13px; font-weight: 600; color: #8a8f98; letter-spacing: .2px;
+    margin: 20px 0 8px 4px;
+    user-select: none; -webkit-user-select: none;
+  }
+  .st-card {
+    background: #fff; border-radius: 14px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 8px 22px rgba(0, 0, 0, .06);
+  }
+  .st-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; height: 52px; padding: 0 16px; position: relative;
+  }
+  /* 分隔线只画在行首（最后一行不画）：用 ::before 贴在行顶，
+     不占布局高度，52px 行高才不会被撑成 53。 */
+  .st-row + .st-row::before {
+    content: ''; position: absolute; left: 16px; right: 0; top: 0; height: 1px;
+    background: rgba(0, 0, 0, .07);
+  }
+  .st-row-label {
+    font-size: 16px; font-weight: 500; color: #111; letter-spacing: .2px;
+    user-select: none; -webkit-user-select: none;
+  }
+  /* 行内的开关：与开关展示页**同一套** .sw / .sw-track / .sw-thumb（轨道尺寸、
+     白点、白↔绿、弹性曲线全复用），只把定位从「absolute right:0」改成行内流式。 */
+  .sw.st-sw { position: relative; right: auto; top: auto; flex: 0 0 auto; }
+  /* 行内开关的时长**不**跟 --sw-tap-dur：那是开关展示页自己的点击倍速
+     （SW_TAP_SPEED），设置页的开关不是展示元素，用回 iOS 那档 0.30s。 */
+  .sw.st-sw .sw-thumb { transition: transform .30s cubic-bezier(.42, .80, .58, 1.2); }
+  .sw.st-sw .sw-track { transition: background .30s ease; }
+  /* 拖拽跟手：关掉过渡。位移改由 thumbStep 写内联 transform（与开关展示页
+     完全同一条路径）—— 原来这里用 --st-t × --sw-travel 自己算一套，
+     与白点浮起的玻璃层是两套数，拖动时玻璃会与白点错开。 */
+  .sw.st-sw.dragging .sw-thumb { transition: none; }
+  .sw.st-sw.dragging .sw-track { transition: none; }
+  /* 倍速滑块：与开关同一档观感（灰轨道 + 绿填充 + 白圆点）。
+     不用原生 <input type=range> —— 各内核（尤其 vivo 一类）对 thumb 的样式
+     支持差异很大，画出来不是同一颗白点。 */
+  .st-range-wrap { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+  /* 倍速行：标题一行、滑杆独占一行（与滑块展示页同款 .sl，300 长才放得下）。
+     .sl 本体是 absolute（left/right/top 全写在 .sl 上），所以外面要一个
+     relative 的槽位给它定位；高度 52 与 .sl-row 一致，轨道正好居中在 26。 */
+  .st-speed-row {
+    height: auto; flex-direction: column; align-items: stretch; gap: 0;
+    padding: 8px 16px 12px;
+  }
+  .st-speed-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .st-speed-sl { position: relative; height: 52px; margin-top: 2px; }
+  /* 轨道比行的可用宽度再收 22×2：
+     滑块展示页有「端点外伸」（sliderEndOut，拖到头时白块**中心**正好压在轨道端点上），
+     展示页轨道外还有 45px 余量吃得下；这里卡片只有 16px padding，
+     白块会出卡 4~8px、玻璃（满浮起 58.9 宽，比白块宽 12.9）会出卡 12~15px。
+     收到 22 后：卡边到轨道端 38px > 玻璃半宽 29.4，两端各留 8.6px。
+     ⚠ 只能改 .sl 的 left/right —— .sl 是 absolute，容器加 padding 不会内缩它。 */
+  .st-speed-sl .sl { left: 26px; right: 26px; pointer-events: auto; }
+  /* 行可滚动：玻璃折射的是纹理里的轨道，行 y 变了纹理必须跟着挪（见 stMeasure）。 */
+  .st-val {
+    font-size: 14px; font-weight: 600; color: #34c759; width: 44px; text-align: right;
+    font-variant-numeric: tabular-nums;
+    user-select: none; -webkit-user-select: none;
+  }
+  .st-range {
+    position: relative; width: 128px; height: 28px;
+    touch-action: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .st-range-track {
+    position: absolute; left: 0; right: 0; top: 12px; height: 4px;
+    border-radius: 2px; background: rgba(0, 0, 0, .10);
+  }
+  .st-range-fill {
+    position: absolute; left: 0; top: 0; height: 100%;
+    border-radius: 2px; background: #34c759;
+  }
+  .st-range-knob {
+    position: absolute; top: 4px; left: 0; width: 20px; height: 20px;
+    border-radius: 10px; background: #fff;
+    box-shadow: 0 0 1px rgba(0, 0, 0, .25), 0 3px 8px rgba(0, 0, 0, .14);
+    will-change: transform;
+  }
+  /* 「过渡动画」关掉后倍速就没有意义了：整行置灰并停止接收事件。 */
+  .st-row.off .st-row-label, .st-row.off .st-val { color: #b6bbc2; }
+  .st-row.off .st-range { opacity: .4; pointer-events: none; }
+  .st-row.off .st-sl { opacity: .4; pointer-events: none; }
+  /* ===== 性能浮标（显示帧率 / 性能监测工具）=====
+     常驻 DOM 但 display:none，两个开关都关时既不显示也不写入文本 —— 零开销。
+     pointer-events:none —— 它盖在场景上，绝不能吃掉顶栏按钮和背景拖动。 */
+  .perf-badge {
+    position: absolute; right: 10px; bottom: 10px; display: none;
+    padding: 5px 9px; border-radius: 9px;
+    background: rgba(0, 0, 0, .62);
+    color: #7cf7a0;
+    font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums; white-space: pre;
+    letter-spacing: .2px;
+  }
+  .perf-badge.show { display: block; }
+  .perf-badge.detail { color: #9fe8ff; }
   /* 进出场景时 .scene-ui 要在 translateX(100%)↔0 之间滑 0.38s，这 16 层
      backdrop-filter 每帧都得跟着位移重算 backdrop —— 弱 GPU（vivo 等）上就是
      「点进去一闪一闪」。菜单里场景本就在屏幕外，滑入结束前也别画：反正在动，看不清。 */
@@ -682,10 +871,12 @@
     padding: 100px 20px 24px;      /* 100 = 顶栏 92 + 一点呼吸 */
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    /* visibility 延迟到位移结束再隐藏：既能参与过渡，又不会挡住场景 */
-    transition: transform .38s cubic-bezier(.32, .72, 0, 1),
-                opacity   .38s ease,
-                visibility 0s linear .38s;
+    /* visibility 延迟到位移结束再隐藏：既能参与过渡，又不会挡住场景。
+       三个时长都跟着 --ui-dur：位移 / 淡出要同步，visibility 的延迟也必须同步
+       —— 否则关掉过渡动画后菜单页还会多留 0.38s 才隐藏，那 0.38s 里它挡在最上层。 */
+    transition: transform var(--ui-dur, .38s) cubic-bezier(.32, .72, 0, 1),
+                opacity   var(--ui-dur, .38s) ease,
+                visibility 0s linear var(--ui-dur, .38s);
   }
   body.menu-open .menu-page,             /* 主页面在前 */
   body.menu-open .menu-glass-layer {
@@ -701,9 +892,9 @@
   .menu-glass-layer {
     position: absolute; inset: 0; z-index: 3; pointer-events: none;
     border-radius: var(--phone-radius); overflow: hidden;
-    transition: transform .38s cubic-bezier(.32, .72, 0, 1),
-                opacity   .38s ease,
-                visibility 0s linear .38s;
+    transition: transform var(--ui-dur, .38s) cubic-bezier(.32, .72, 0, 1),
+                opacity   var(--ui-dur, .38s) ease,
+                visibility 0s linear var(--ui-dur, .38s);
   }
   #menu-glass-canvas {
     position: absolute; inset: 0;
@@ -843,16 +1034,20 @@
   <div class="phone" id="phone">
     <!-- 主页面在场景之下，被推进来的场景盖住 -->
     <div class="menu-page" id="menuPage" aria-hidden="false">
-      <div class="menu-group-title">液态玻璃组件</div>
+      <div class="menu-group-title">所有组件</div>
       <button class="menu-item" id="menuButtonsItem" type="button">玻璃按钮</button>
       <button class="menu-item" id="menuSwitchItem" type="button">开关</button>
       <button class="menu-item" id="menuSliderItem" type="button">玻璃滑块</button>
-      <button class="menu-item" id="menuTabbarItem" type="button">标签栏</button>
+      <button class="menu-item" id="menuTabbarItem" type="button">Dock栏</button>
       <button class="menu-item" id="menuControlItem" type="button">控制中心</button>
       <button class="menu-item" id="menuPasswdItem" type="button">密码输入</button>
       <button class="menu-item" id="menuDialogItem" type="button">玻璃对话框</button>
       <button class="menu-item" id="menuClockItem" type="button">玻璃时钟</button>
       <button class="menu-item" id="menuBlurItem" type="button">模糊</button>
+
+      <div class="menu-group-title">其他</div>
+      <button class="menu-item" id="menuSettingsItem" type="button">设置</button>
+      <button class="menu-item" id="menuAboutItem" type="button">关于</button>
 
     </div>
     <!-- 主页玻璃层：canvas 画材质、DOM 按钮画图标（顺序不能反，图标要在上面） -->
@@ -909,6 +1104,95 @@
         <div class="clock-panel" id="clockPanel" aria-hidden="true"><div class="clock-shadow" id="clockShadowEl"></div></div>
         <!-- 模糊场景：同样共用背景 / 顶栏 / 选择图片，中间先留空，内容后续再填 -->
         <div class="blur-panel" id="blurPanel" aria-hidden="true"><div class="pb" id="pbEl"></div></div>
+        <!-- 「其他」分类·设置场景：干净底板（顶栏两个按钮在），底部「选择图片」去掉，
+             背景全白，中间先留空，内容后续往 #settingsPanel 里填。 -->
+        <div class="settings-panel" id="settingsPanel" aria-hidden="true">
+          <div class="st-scroll">
+            <div class="st-group-title">界面</div>
+            <div class="st-card">
+              <div class="st-row" id="stRowAnim">
+                <div class="st-row-label">过渡动画</div>
+                <div class="sw st-sw on" id="stSwAnim" role="switch" tabindex="0"
+                     aria-label="过渡动画" aria-checked="true">
+                  <div class="sw-track"></div>
+                  <div class="sw-thumb"></div>
+                </div>
+              </div>
+              <!-- 倍速行：与滑块展示页**同一套** .sl / .sl-track / .sl-fill / .sl-thumb，
+                   玻璃浮起走同一条代码路径（行几何见 ST_SLIDER_GEO）。 -->
+              <div class="st-row st-speed-row" id="stRowSpeed">
+                <div class="st-speed-head">
+                  <div class="st-row-label">过渡动画倍速</div>
+                  <div class="st-val" id="stVal">1.0×</div>
+                </div>
+                <div class="st-speed-sl">
+                  <div class="sl st-sl" id="stSlider" role="slider" tabindex="0"
+                       aria-label="过渡动画倍速" aria-valuemin="0.5" aria-valuemax="2"
+                       aria-valuenow="1">
+                    <div class="sl-track"><div class="sl-fill" id="stSliderFill"></div></div>
+                    <div class="sl-thumb"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="st-group-title">性能</div>
+            <div class="st-card">
+              <div class="st-row" id="stRowFps">
+                <div class="st-row-label">显示帧率</div>
+                <div class="sw st-sw" id="stSwFps" role="switch" tabindex="0"
+                     aria-label="显示帧率" aria-checked="false">
+                  <div class="sw-track"></div>
+                  <div class="sw-thumb"></div>
+                </div>
+              </div>
+              <div class="st-row" id="stRowPerf">
+                <div class="st-row-label">性能监测工具</div>
+                <div class="sw st-sw" id="stSwPerf" role="switch" tabindex="0"
+                     aria-label="性能监测工具" aria-checked="false">
+                  <div class="sw-track"></div>
+                  <div class="sw-thumb"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 「其他」分类·关于场景：与设置页同一套「干净底板」——
+             顶栏两个按钮在，底部「选择图片」去掉（CSS 的 .pick-wrap + setSceneMode
+             里的 g.pick 分支），背景全白（plainBgOn）。
+             内容就是 DOM 文字，只有一份，不往画布里补画。 -->
+        <div class="about-panel" id="aboutPanel" aria-hidden="true">
+          <div class="st-scroll">
+            <div class="ab-title">关于</div>
+
+            <div class="st-group-title">制作</div>
+            <div class="st-card">
+              <div class="st-row ab-row">
+                <div class="ab-maker">本网站使用 <b>Hy4 preview模型</b> 制作</div>
+              </div>
+            </div>
+
+            <div class="st-group-title">项目说明</div>
+            <div class="st-card">
+              <div class="ab-para">做这个网站的起因很简单：液态玻璃这套视觉语言在浏览器里究竟能推到哪一步。其实在其他网页上也有很多优秀的项目。玻璃真正的效果恰恰在：里面有折射色散，拖动时被拉扯。当在玻璃时钟界面时转一下手机，高光会在玻璃字体边缘移动，但需要浏览器可以调用传感器才行，这些全部是实时渲染。</div>
+            </div>
+
+            <div class="st-group-title">原理说明</div>
+            <div class="st-card">
+              <div class="ab-para">玻璃不是贴图，是实时算出来的。画面分两层：底层是一张拖动就可以不断滚动的背景，上面覆盖着若玻璃组件。每块玻璃在着色器里用有向距离场描述自己的圆角矩形轮廓，据此逐像素算出当前点离边缘多远、法线朝哪边，再按这个法线偏移采样背景纹理——背后的画面便沿边缘被拉扯挤压，形成折射。越靠边偏移越大、越往中间越平，中间几乎原样透出背景。偏移时红绿蓝三通道取略微不同的量，边缘就会析出淡淡彩边，也就是色散。玻璃时钟的玻璃字体的边缘高光：光的方向固定，法线与光越正对那一侧越亮，转动手机时高光会沿字体边缘移动——方向传感器实时参与了这个计算，但需要浏览器支持。所有控件的形变、浮起与回弹都不是预设关键帧，而是使用弹簧方程逐帧积分算出来。</div>
+            </div>
+
+            <div class="st-group-title">其他网站</div>
+            <div class="st-card">
+              <a class="ab-link" id="abLink1"
+                 href="https://Mzmxh.github.io/yetaiboli-ai"
+                 target="_blank" rel="noopener noreferrer">
+                <span class="st-row-label">液态玻璃</span>
+                <span class="ab-url">https://Mzmxh.github.io/yetaiboli-ai</span>
+              </a>
+            </div>
+            <div class="ab-hint">点按上面即可跳转。</div>
+          </div>
+        </div>
         <!-- 标签栏场景：同样共用背景 / 顶栏 / 选择图片，中间是 iOS 26 风格的底部标签栏 -->
         <div class="tabbar-panel" id="tabbarPanel" aria-hidden="true">
           <div class="tbar" id="tbarEl">
@@ -958,6 +1242,7 @@
         <div id="thumbShadows"></div>
         <canvas id="thumb-glass-canvas"></canvas>
       </div>
+      <div class="perf-badge" id="perfBadge"></div>
     </div>
   </div>
 </div>
@@ -1517,7 +1802,12 @@ const DEFAULT_TINT = { color: '#ffffff', strength: 0, mode: 'mix' };
 let renderer, scene, camera, material, texture;
 let bgDim = 0, bgBlur = 0;
 let bgScale = 1, bgOffsetX = 0, bgOffsetY = 0;
-
+/* 「其他」分类（设置 / 关于）：背景全白。
+   用独立 flag，不在 setGlassUniforms 里直接读 sceneMode —— sceneMode 是 let，
+   初始化那次渲染发生在它声明之前，那时读它会抛 TDZ（typeof 也一样抛）。
+   只在 setSceneMode 里改这个 flag。 */
+let plainBgMode = false;
+function plainBgOn() { return plainBgMode; }
 /* ================= 四个玻璃按钮 =================
    尺寸/坐标都是设备像素。胶囊：高 52 CSS（104 设备像素），圆角 = 高/2。 */
 const CX = W / 2;
@@ -2982,6 +3272,11 @@ function clockTextNext() {
    ② 兜底延后：万一整分钟都在忙、没预烘成，翻页这帧绝不现场烘 —— 挂 clockPending，
       等 clkBusy() 变 false（手指离开 + 惯性停稳 + 各弹簧归位）再补烘。静止时补烘，
       画面上没有任何东西在动，那几百毫秒根本感知不到。
+
+   ⚠⚠ 只在**玻璃时钟这一页**烘（见 clockTickSecond 的闸门）。
+   之前目录页也预烘（为了让「点进时钟页」零延迟），代价是：退出时钟页回到目录后
+   sceneMode 仍是 'clock'，烘焙照旧每分钟来一次，而目录页背景的流体一直在动 ——
+   到点就白掉十几帧，看着就是「别的页面到点卡一下」。现在退出即停。
    ⚠ clkBusy() 的阈值必须比各弹簧自己的「停稳条件」略松，否则两边在阈值附近反复
      打架（刚判静止又判忙），烘焙永远排不上队。 */
 const CLK_DEFER_MAX = 20;      // 秒：连续忙这么久就强行烘一次，保证时间不会一直错
@@ -3021,13 +3316,20 @@ function clkBusy() {
 }
 
 /* 「可以现场烘了吗」= 页面自己的动画都停了 **且** 手上已经静了一会儿。
-   后一半是为了目录页：目录列表本身可滚动（overflow-y:auto），clkBusy() 只认页面
-   自己那几套弹簧，认不出「手指正在划列表」，此时烘焙会把列表惯性卡出可见的顿挫。 */
+   后一半是因为 clkBusy() 只认页面自己那几套弹簧，认不出「手指正在划列表 / 正在
+   惯性滚动」这类外部动作，此时烘焙会把它们卡出可见的顿挫。 */
 function clkIdleEnough() {
   if (clkBusy()) return false;
-  /* 目录刚打开那 0.38s 正在位移过渡，此刻烘焙会把过渡卡一下。 */
-  if (menuOpen && performance.now() - _menuOpenAt < 300) return false;
   return performance.now() - _lastInteractAt > CLK_IDLE_MS;
+}
+
+/* 退出时钟页 = 立刻停烘。两件事都要做：
+   ① 挂起的补烘作废（否则它会在别的页面等到「空闲」时突然烘一次）；
+   ② 预烘好的下一分钟丢掉 —— 它属于未来的某一分钟，留着只占显存，
+      而且下次进来早就过期了，不可能用上。 */
+function clkStop() {
+  clockPending = false;
+  if (clkNext) { clkNext.tex.dispose(); clkNext = null; }
 }
 
 /* 换贴。tex 是现成的（预烘好的或刚烘好的），所以这里零烘焙。 */
@@ -3077,9 +3379,11 @@ function updateClockText() {
 /* 翻页调度（主循环按真实时间每 CLK_POLL_MS 调一次）。真正烘焙只可能发生在
    clkIdleEnough() 为 true 的那一刻 —— 拖背景 / 惯性 / 弹动 / 刚交互过，统统不烘。 */
 function clockTickSecond() {
-  /* 别的场景一律不烘（那些页面看不到这块玻璃，每分钟白掉几帧）。
-     但**目录页**要烘 —— 见下面「进场零延迟」。 */
-  if (sceneMode !== 'clock' && !menuOpen) { clockPending = false; return; }
+  /* 只有**玻璃时钟这一页**烘。
+     ⚠ menuOpen 必须一起判：退出时钟页走的是 showMenu()，它只翻 menuOpen、
+       不动 sceneMode —— 回到目录后 sceneMode 仍是 'clock'。以前就是漏了这一条，
+       于是在目录页每分钟照样烘一次，背景流体到点就卡一下。 */
+  if (menuOpen || sceneMode !== 'clock') { clkStop(); return; }
   const nowS = Date.now() / 1000;
   const want = clockTextNow();
   if (want !== clockTexText) {
@@ -3554,7 +3858,8 @@ function setGlassUniforms(glass) {
   }
   u.bevelStrength.value = (glass.bevelStrength != null ? glass.bevelStrength : 0);
   u.bevelBand.value = (glass.bevelBand != null ? glass.bevelBand : 9);
-  u.bgDim.value = ccDimAmt();
+  /* 白底不压暗：深色模式下 bgDim 是 0.32，照旧乘上去会变成灰底。 */
+  u.bgDim.value = plainBgOn() ? 0 : ccDimAmt();
   u.bgScale.value = bgScale;
   u.bgOffset.value.set(bgOffsetX, bgOffsetY);
   u.bgTexSize.value.set(W, H);
@@ -3569,6 +3874,17 @@ function setGlassUniforms(glass) {
     u.tBackdrop.value = texture;
     u.tBackdropBlur.value = getBgTextureForBlur(CC_BG_BLUR_MAX);
     u.bgBlurMix.value = p;
+  } else if (plainBgOn()) {
+    /* 设置 / 关于：整屏背景换成纯白。
+       bgMaterial 直接复用 material.uniforms 里的这些对象引用（不是拷贝），
+       所以这里改一次，整屏背景那一趟也一起变白，无需第二处维护。 */
+    /* 关于页换成「白底 + 顶栏条带」那张：滚到顶栏后面的行会被画上去，
+       于是不但玻璃能折射到它们，顶栏区域也不再是齐刷刷一条空白边。
+       设置页内容短、滚不到顶栏后面，继续用纯白那张，零额外开销。 */
+    const wt = whiteBgTex();
+    u.tBackdrop.value = wt;
+    u.tBackdropBlur.value = wt;
+    u.bgBlurMix.value = 0;
   } else {
     u.tBackdrop.value = getBgTextureForBlur(ccBgBlurPx());
     u.tBackdropBlur.value = texture;
@@ -3578,10 +3894,12 @@ function setGlassUniforms(glass) {
   const blurPx = (ccGb >= 0 && glass.mode === 'control')
     ? Math.max(ccGb, Math.round(bgBlur || 0))             // 控制中心：模糊跟随出场进度
     : Math.max(glass.blur != null ? glass.blur : 0, bgBlur);
-  const bgTex = getBgTextureForBlur(blurPx);
+  /* 玻璃折射采样的背景也要跟着换白 —— 否则白底上玻璃里透出一团流体色，
+     看着像贴了块脏斑。 */
+  const bgTex = plainBgOn() ? (whiteBgTex()) : getBgTextureForBlur(blurPx);
   u.tDiffuse.value = bgTex;
-  u.tDiffuseSharp.value = texture;
-  u.blurRadius.value = (bgTex === texture) ? blurPx : 0;
+  u.tDiffuseSharp.value = plainBgOn() ? (whiteBgTex()) : texture;
+  u.blurRadius.value = plainBgOn() ? 0 : ((bgTex === texture) ? blurPx : 0);
   u.edgeClarity.value = glass.clarity != null ? glass.clarity : 0;
   const tint = glass.tint || DEFAULT_TINT;
   u.tintColor.value.setStyle(tint.color || '#ffffff');
@@ -4297,6 +4615,24 @@ function prewarmCcBlur() {
   try { blurTexCache.forEach(function (e) { if (e.dirty) dirty++; }); } catch (e) { dirty = 1; }
   if (dirty === 0) _ccPrewarmDone = true;
 }
+/* 纯白背景纹理：设置 / 关于两页用（「背景全白」）。
+   建一次 2×2 全白 canvas 就够 —— 它同时喂给 bgMaterial（整屏背景那一趟）和玻璃的
+   tDiffuse（折射采样），两处都白，玻璃才不会在白底上透出一团流体色。
+   全程不碰 texture / bgSourceEl：用户选过的图片背景不会被覆盖，离开这两页直接恢复。 */
+let _whiteBgTex = null;
+function whiteBgTex() {
+  if (_whiteBgTex) return _whiteBgTex;
+  const c = document.createElement('canvas');
+  c.width = 2; c.height = 2;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ffffff';
+  x.fillRect(0, 0, 2, 2);
+  _whiteBgTex = new THREE.CanvasTexture(c);
+  _whiteBgTex.wrapS = _whiteBgTex.wrapT = THREE.ClampToEdgeWrapping;
+  _whiteBgTex.minFilter = _whiteBgTex.magFilter = THREE.LinearFilter;
+  _whiteBgTex.generateMipmaps = false;
+  return _whiteBgTex;
+}
 function getBgTextureForBlur(blurPx) {
   const b = Math.round(blurPx || 0);
   if (b <= 0) return texture;
@@ -4313,7 +4649,6 @@ function getBgTextureForBlur(blurPx) {
   }
   return e.texture;
 }
-
 
 
 /* ================= UI：文字层跟随玻璃 ================= */
@@ -4461,6 +4796,8 @@ startTilt();
   });
 })();
 const blurPanelEl = document.getElementById('blurPanel');
+const settingsPanelEl = document.getElementById('settingsPanel');
+const aboutPanelEl = document.getElementById('aboutPanel');
 /* ===== 渐变模糊：按 σ(y)=M(1−y) 反推出 16 层的 δₖ 与遮罩区间 =====
    N 别低于 12（层太少会出现台阶），M 是带子顶部的最大模糊半径（CSS px）。
    源文件跑在 1600×1000 的画布上用 M=30；这里屏幕只有 390 宽、背景条纹间距
@@ -5757,7 +6094,30 @@ function applyLabelContrast(dark) {
 document.getElementById('themeBtn').addEventListener('click', toggleTheme);
 // 键盘 Enter / Space 触发的 click 不受 pointer-events 影响，仍能用
 // （鼠标点击走上面的 label 命中层，不会走到这里，所以不会重复打开）
-pickBtnEl.addEventListener('click', () => { fileInputEl.click(); });
+/* 设置页：底部这块玻璃（glasses[6]）复用成「恢复默认」按钮 —— 文案跟着场景切，
+   点击行为也跟着切。其余场景一切照旧。 */
+function syncPickLabel() {
+  if (!pickBtnEl) return;
+  const want = (sceneMode === 'settings') ? '恢复默认' : '选择图片';
+  if (pickBtnEl.textContent !== want) pickBtnEl.textContent = want;
+  pickBtnEl.setAttribute('aria-label', want);
+}
+/* 不在顶层调用：sceneMode 声明在后面（let，有 TDZ），这里调会直接抛错。
+   首次切换场景时 setSceneMode 会调一次，平时由它维护；默认文案「选择图片」
+   在 HTML 里就是写死的，不调也不会错。 */
+// 鼠标点击由 canvas 命中玻璃后触发（DOM 按钮已穿透）；键盘 Enter/Space 仍走这里
+pickBtnEl.addEventListener('click', () => {
+  if (sceneMode === 'settings') { if (window.__stRestore) window.__stRestore(); return; }
+  fileInputEl.click();
+});
+/* <label for="fileInput"> 的原生行为是「点击即转发给 input」 —— 在设置页必须拦掉，
+   否则点「恢复默认」会顺带弹出文件选择器。preventDefault 即可，
+   按下浮起的反馈走的是 pointerdown 那条路，不受影响。 */
+pickHitEl.addEventListener('click', e => {
+  if (sceneMode !== 'settings') return;
+  e.preventDefault();
+  if (window.__stRestore) window.__stRestore();
+});
 fileInputEl.addEventListener('change', e => {
   const f = e.target.files && e.target.files[0];
   if (f) setImageBackground(f);
@@ -6140,8 +6500,14 @@ function stepThumbTrackTween(dt) {
     return false;
   }
   let dirty = false;
-  for (let i = 0; i < SWITCH_ROWS.length; i++) {
-    const target = SWITCH_ROWS[i].on ? 1 : 0;
+  /* 设置页的开关走同一条补间，只是行数是 3（不是展示页的 4），
+     所以这里按「当前场景的行集合」遍历，不能写死 SWITCH_ROWS。 */
+  const tRows = (sceneMode === 'settings') ? ST_ROWS : SWITCH_ROWS;
+  for (let i = 0; i < tRows.length; i++) {
+    /* 倍速那一行是滑块（连续值进度条），不是开关：它没有 0/1 状态色，
+       轨道色由 .sl-fill 的蓝条表达。放进这条补间会被写成「全满/全空」。 */
+    if (tRows[i].sl) continue;
+    const target = tRows[i].on ? 1 : 0;
     let cur = thumbTweenT[i];
     /* 拖动中：进度直接取滑块位置，不走时间补间 —— 手指在哪里轨道就是哪个色，
        往左拖变白、往右拖变绿。松手时 swTrackLiveT[i] 置空，才从这里接着补到目标。 */
@@ -6167,9 +6533,10 @@ function stepThumbTrackTween(dt) {
    与纹理共用同一个 thumbTweenT[i]：DOM 看到什么色，玻璃折射出来的就是什么色。
    只在开关场景生效 —— 滑块 / 标签栏的 .sl-track / 标签栏条另有自己的配色，不能串。 */
 function swTrackWriteDom(i) {
-  if (sceneMode !== 'switches') return;
+  if (sceneMode !== 'switches' && sceneMode !== 'settings') return;
   const els = switchEls[i];
   if (!els || !els.track) return;
+  if (isSliderRow(i)) return;      // 滑块行的轨道色是蓝条，不走开关的白↔绿补间
   const v = thumbTweenT[i];
   if (v === undefined) return;
   const q = Math.round(v * 1000);
@@ -6582,10 +6949,18 @@ function createThumbBgTexture() {
      轨道之外若留着 alpha=0，WebGL 上传时会反预乘成 rgb(0,0,0)，
      于是玻璃上下两侧折射出一道黑弧，看着像脏边。 */
   if (thumbTexFull || thumbTexDim !== bgDim) {
-    try {
-      const src = bgSourceEl;
-      if (src) bgDrawImage(ctx, 0, 0, W, H, 0, 0, W, H);
-    } catch (e) {}
+    /* 纯白页（设置 / 关于）：整屏也要铺白，不能只改下面「逐行」那一次。
+       否则轨道包围盒之外那部分仍是流体深色，玻璃边缘折射到那里就露馅 ——
+       实测改前轨道外取到 (47,208,122)、行间空隙 (32,65,105)，脚下屏幕却是纯白。 */
+    if (plainBgOn()) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      try {
+        const src = bgSourceEl;
+        if (src) bgDrawImage(ctx, 0, 0, W, H, 0, 0, W, H);
+      } catch (e) {}
+    }
     // ② 深色模式：背景压暗（与 shader 里 bgDim 一致）。
     //    轨道是 DOM 画的、不参与 shader 压暗，所以必须在画轨道之前只压背景这一层。
     if (bgDim > 0) {
@@ -6604,9 +6979,10 @@ function createThumbBgTexture() {
      拖动时只有手指底下那一行的 t 在变，其余三行直接跳过 —— 重画和上传都省掉。 */
   const dirty = [];
   for (let i = 0; i < swRowY.length; i++) {
+    bindRowGeo(i);
     const thSt0 = swThumbs[i];
     const bs0 = thSt0 ? 1 - Math.max(0, thSt0.grow) * TEX_TRACK_SHRINK_AT_FULL : 1;
-    const t0 = (sceneMode === 'slider')
+    const t0 = isSliderRow(i)
       ? swRowT(i)
       : (thumbTweenT[i] === undefined ? swRowT(i) : thumbTweenT[i]);
     /* 标签栏要把弹起倍率算进签名：图标在纹理里是跟着 tbarBounce 放大的，
@@ -6628,9 +7004,19 @@ function createThumbBgTexture() {
     const r = trackRegion(i);
     dirty.push({ r, slot: i });
     ctx.clearRect(r.x, r.y, r.w, r.h);
-    try {
-      bgDrawImage(ctx, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
-    } catch (e) {}
+    /* 纯白页（设置 / 关于）：折射采样源是 2×2 白纹理（见 whiteBgTex），
+       但这里 bgDrawImage 画的是 bgSourceEl（流体背景，深色）—— 不改的话
+       玻璃里折射出的是深色流体，脚下的屏幕却是白的，一眼就穿帮。
+       实测改前纹理里那一片是 (110~150) 的灰，改后是 255。
+       轨道仍画在白底之上，顺序不变。 */
+    if (plainBgOn()) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+    } else {
+      try {
+        bgDrawImage(ctx, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
+      } catch (e) {}
+    }
     if (bgDim > 0) {
       ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, bgDim) + ')';
       ctx.fillRect(r.x, r.y, r.w, r.h);
@@ -6809,8 +7195,8 @@ function createThumbBgTexture() {
         ctx.stroke();
         ctx.restore();
       }
-    } else if (sceneMode === 'slider') {
-      /* 滑块场景：一条细线，左侧（已走过）亮蓝、右侧淡蓝，分界 = 滑块位置 t。
+    } else if (isSliderRow(i)) {
+      /* 滑块：一条细线，左侧（已走过）亮蓝、右侧淡蓝，分界 = 滑块位置 t。
          用 clip 保证左边那一头也是圆角 —— 直接画个矩形会把左端的圆角切掉。 */
       const rr = Math.min(w, h) / 2;
       ctx.save();
@@ -6836,6 +7222,7 @@ function createThumbBgTexture() {
       ctx.fillStyle = g; ctx.fill();
     }
   }
+  unbindRowGeo();
   if (!thumbTex) {
     thumbTex = new THREE.CanvasTexture(thumbTexCanvas);
     thumbTex.minFilter = THREE.LinearFilter;
@@ -7091,7 +7478,8 @@ function thumbStep(dt) {
      必须在这里清（见 clearThumbGlassOnce 的注释）。
      注意开关场景（switches）也要画：按下开关时白点浮起变玻璃，画的就是这一层，
      不能把它排除在外（曾漏掉它，表现为「点开关玻璃不浮起、直接消失」）。 */
-  if (sceneMode !== 'switches' && sceneMode !== 'slider' && sceneMode !== 'tabbar') {
+  if (sceneMode !== 'switches' && sceneMode !== 'slider' && sceneMode !== 'tabbar'
+      && sceneMode !== 'settings') {
     hideThumbGlass(); return;
   }
   /* 这三个场景里控件集合也可能为空（切场景当帧 switchEls 刚换成空数组），
@@ -7171,6 +7559,7 @@ function thumbStep(dt) {
   applyTabbarBounce(stepTabbarBounce());
   // ---- 宽度 / 位置：由 grow 逐帧写，顺序与玻璃放大严格一致 ----
   for (let i = 0; i < thumbEls.length && i < swThumbs.length; i++) {
+    bindRowGeo(i);
     const el = thumbEls[i], th = swThumbs[i];
     const w = SW_THUMB_W + SW_PRESS_GROW * th.grow;
     if (th.grow <= 0.0005) { if (el.style.width) el.style.width = ''; }
@@ -7184,7 +7573,7 @@ function thumbStep(dt) {
        左端不受影响（0×0.85=0）。行程区间因此不以轨道中心对称（24.0 / 39.3，中心 33），
        玻璃按轨道中心放大后左右探出就不等（16.5 vs 11.0）。
        改写成尺寸 + 居中偏移后，transform 只剩纯位移，行程严格对称。 */
-    if (sceneMode === 'slider' || sceneMode === 'tabbar') {
+    if (isSliderRow(i) || sceneMode === 'tabbar') {
       /* 滑块（细调节杆）/ 标签栏选中框：拉长 / 缩小的居中补偿全部走 left，绝不能写进 transform。
          原因是 .sl-thumb 带 `transition: transform .22s`，而 left / width / height 不带。
          补偿量写进 transform 时，JS 每帧改目标、CSS 过渡在后面追 —— 实测渲染中心
@@ -7247,7 +7636,7 @@ function thumbStep(dt) {
     /* 滑块场景：点击跳转的补间在松手后还要跑完，这期间位移必须继续写，
        否则 thumbStep 一停手，滑块就卡在半路、蓝条却已经走完了。 */
     if (heldNow
-        || (sceneMode === 'slider' && (th.grow > 0.0005 || slJump[i].active))
+        || (isSliderRow(i) && (th.grow > 0.0005 || slJump[i].active))
         /* 标签栏：点击别的标签 / 松手吸附的补间也要继续写位移，
            否则 thumbStep 一停手，选中框就卡在半路。 */
         || (sceneMode === 'tabbar' && (th.grow > 0.0005 || tabJump.active))) {
@@ -7266,12 +7655,13 @@ function thumbStep(dt) {
       const pad = 0;
       /* 滑块场景：位移 = sliderThumbTX（含端点外伸），白块与玻璃同心，
          拖动到边缘时不会再从玻璃后面露出一截半透明白块。 */
-      const tx0 = (sceneMode === 'slider')
+      const tx0 = isSliderRow(i)
         ? sliderThumbTX(th.baseX / SW_TRAVEL)
         : th.baseX - pad;
       el.style.transform = 'translateX(' + tx0.toFixed(2) + 'px)';
     }
   }
+  unbindRowGeo();
   // 没有 WebGL 时弹簧照跑（状态机保持一致），用 CSS 模拟「浮起」：
   // 白点保持不透明（淡出后底下是空的，反而不如留着），靠放大 + 阴影加深表现抬起。
   if (!tRenderer) {
@@ -7302,6 +7692,7 @@ function thumbStep(dt) {
   const rects = new Array(nRow);
   for (let i = 0; i < nRow; i++) rects[i] = thumbEls[i].getBoundingClientRect();
   for (let i = 0; i < nRow; i++) {
+    bindRowGeo(i);
     const el = thumbEls[i], th = swThumbs[i];
     const r = rects[i];
     // 直接读 DOM 滑块的实际矩形：CSS 的位移/变宽/过冲回弹全部自动同步，
@@ -7424,11 +7815,11 @@ function thumbStep(dt) {
        钉在 324.2 不动约 150ms，之后才慢慢跟上，看着就是「猛撞到头再沉下去」。
        窗口固定为 [308, 326] 后：滑块两端正好落在边界，开/关各走满 18px，
        左右对称，过冲（1.44px）被夹掉也完全无感。 */
-    const cMin = (sceneMode === 'slider')
+    const cMin = isSliderRow(i)
       ? trackLCss
       : (sceneMode === 'tabbar' ? trackLCss + SW_PAD + SW_THUMB_W / 2
                                 : trackLCss + SW_PAD + SW_THUMB_W / 2);
-    const cMax = (sceneMode === 'slider')
+    const cMax = isSliderRow(i)
       ? trackLCss + SW_TRACK_W
       : (sceneMode === 'tabbar' ? cMin + SW_TRAVEL
                                 : cMin + SW_TRAVEL);
@@ -7444,7 +7835,7 @@ function thumbStep(dt) {
        (cxIn − 轨道中心) × G ≤ 行程半宽，本来就冲不过端点；
        留着那层反而会把终点外探从 7.2 拉回 9，左右不对称。 */
     const Gexp = G;
-    const cxGlass = (sceneMode === 'slider')
+    const cxGlass = isSliderRow(i)
       ? cxIn
       : trackCxCss + (cxIn - trackCxCss) * Gexp;
     const raw = th.lift;
@@ -7506,6 +7897,7 @@ function thumbStep(dt) {
     tRenderer.render(tScene, tCamera);
     try { tRenderer.setScissorTest(false); } catch (e) {}
   }
+  unbindRowGeo();
 }
 
 function renderMenuGlass() {
@@ -7529,6 +7921,496 @@ function renderMenuGlass() {
   mRenderer.render(mScene, mCamera);
   try { mRenderer.setScissorTest(false); } catch (e) {}
 }
+
+/* ================= 设置页（「其他」分类）=================
+   四项：过渡动画（默认开）/ 过渡动画倍速（默认 1.0×）/ 显示帧率（默认关）/
+   性能监测工具（默认关）。
+   倍速只压缩**时长**、不动曲线：翻页那条 cubic-bezier(.32, .72, 0, 1) 原样保留，
+   所以「快」是同一条曲线更快走完，不是换成另一条更陡的曲线 —— 不会有新的稳定性问题。 */
+const SETTINGS_KEY = 'lg_settings_v1';
+const settings = { anim: true, speed: 1.0, fps: false, perf: false };
+/* 设置不持久化：只活在内存里，关掉网页（或刷新）就回到上面的默认值。
+   顺带把以前存过的旧存档清掉 —— 光让新设置不写入是不够的，历史数据还躺在
+   浏览器里，下次进来照样会被读出来。 */
+(function dropLegacySettings() {
+  try { localStorage.removeItem(SETTINGS_KEY); } catch (e) {}
+})();
+function saveSettings() { /* 不再落盘：设置只保存在内存，刷新即回默认 */ }
+/* 翻页动画基准时长（ms）：与 CSS 里原来的 .38s 同值，现在由这里派生。 */
+const UI_DUR_BASE = 380;
+/* 所有跟「翻页动画」绑在一起的等待时长都走这一个换算：倍速 → 除以倍速；
+   关掉动画 → 直接 1ms（不是 0：0 会被部分内核当成「没写」而回落成默认值）。 */
+function uiScaledMs(ms) {
+  return settings.anim ? Math.max(1, Math.round(ms / settings.speed)) : 1;
+}
+function applyUiSpeed() {
+  document.documentElement.style.setProperty('--ui-dur', (uiScaledMs(UI_DUR_BASE) / 1000).toFixed(3) + 's');
+}
+
+/* ---- 行内开关：与开关展示页同款 ----
+   展示页那套开关的玻璃层依赖全局几何常量（SW_X / SW_TRACK_W / swRows），
+   每行一个 x 做不到；而设置页底板是纯白，玻璃折射白底实测只有 242/255，
+   本来就几乎看不见 —— 接玻璃没有收益，只有开销和风险。
+   所以这里复用的是 DOM + CSS 那一份（轨道尺寸 / 白点 / 白↔绿 / 弹性曲线），
+   手感三项也照搬：
+     · 点击  → 走 CSS 那条带过冲的 cubic-bezier(.42,.80,.58,1.2) 弹性滑过去；
+     · 拖拽  → 跟手，松手才定状态，判定阈值 50%（与展示页同一条）；
+     · 轨道色 → 拖拽中按进度在白↔绿之间插值，与展示页同一条 smoothstep。
+   拖拽中加 .dragging 关掉过渡，松手移除它、清掉内联颜色 → 浏览器从当前值
+   过渡到目标值，不会跳。
+
+   上面那段是「只仿 DOM 版」的旧说明 —— 现在改成真接玻璃了：白点按下 →
+   swBeginPress(i) 走展示页那条浮起时间轴，折射纹理 / 轨道色补间 / 惯性拉伸
+   全部复用同一份代码，所以是「真·同款」而不是仿一套。 */
+/* ---- 设置页行内开关的「行」定义 ----
+   必须在 initSettings（下面那个同步 IIFE）之前声明：它要在初始化时把
+   localStorage 读出来的状态写进 ST_ROWS[i].on，晚声明会撞 TDZ。
+   stSwEls 的结构与 switchElsBase 完全一致（sw / thumb / track / row），
+   所以 switchEls 指向它之后，thumbStep / 纹理 / 玻璃渲染一趟都不用改。 */
+const ST_SW_IDS = ['stSwAnim', 'stSwFps', 'stSwPerf'];
+const ST_ROWS = ST_SW_IDS.map(() => ({ y: 0, on: false }));
+const stSwEls = ST_SW_IDS.map((id, i) => {
+  const el = document.getElementById(id);
+  return { sw: el, thumb: el && el.querySelector('.sw-thumb'),
+           track: el && el.querySelector('.sw-track'), row: ST_ROWS[i] };
+});
+/* 第 4 行是「过渡动画倍速」—— 滑块（连续值），不是开关。
+   同一屏里既有开关又有滑块，而 SW_* / GLASS_* 那套常量是场景级的，
+   所以这一行自带 geo，行循环进出时临时换上（见 bindRowGeo）。
+   数值 = 滑块展示页那一套（300×8 轨道 + 46×30 白块），轨道宽 / 中心 x
+   由 stMeasure() 实测后写回（卡片里的可用宽度不是写死的 300）。 */
+const ST_SLIDER_ROW = {
+  y: 0, on: 0, sl: true,
+  geo: {
+    SW_TRACK_W: 300, SW_TRACK_H: 8, SW_PAD: 0,
+    SW_THUMB_W: 46,  SW_THUMB_H: 30, SW_PRESS_GROW: 10,
+    SW_TRAVEL: 254,  SW_X: 195,
+    GLASS_BASE_W: 46, GLASS_BASE_H: 30,
+    GLASS_WS: 0.28, GLASS_HS: 0.30, GLASS_TG: 1,
+    TEX_SHRINK: 0, TEX_XEXT: 0,
+    EDGE_W: 1.35, EDGE_B: 1.7, EDGE_R: 1.10
+  }
+};
+ST_ROWS.push(ST_SLIDER_ROW);
+{
+  const el = document.getElementById('stSlider');
+  stSwEls.push({ sw: el, thumb: el && el.querySelector('.sl-thumb'),
+                 track: el && el.querySelector('.sl-track'),
+                 fill:  el && el.querySelector('.sl-fill'), row: ST_SLIDER_ROW });
+}
+/* 设置页开关的中心 x / 各行 y。
+   x 是常量 326：卡片右对齐（390 − st-scroll 的 20 − 行的 padding 16 − 半轨道 28），
+     三行一致，所以仍能用单一 SW_X 表达。
+   y 由 stMeasure() 实测：面板可上下滚，纵向不是常量。
+     只取纵向是因为场景层在目录里带 translateX(100%)，那时横向 rect 是偏的；
+     而纵向不受横向位移影响，滚动时反而必须重读 —— 否则纹理里的轨道
+     画在滚动前的位置，玻璃折射出来的是错位的一条。 */
+let stRowX = 326;
+let stRowY = [165, 316, 368];
+function stMeasure() {
+  const ph = document.querySelector('.phone');
+  if (!ph || !stSwEls[0] || !stSwEls[0].sw) return false;
+  const pr = ph.getBoundingClientRect();
+  if (!pr.height) return false;                       // 面板还没布局出来
+  const k = PHONE_W / (pr.width || PHONE_W);
+  /* 横向用 offsetLeft 沿 offsetParent 累加：offsetLeft 是**布局**坐标，
+     不受 CSS transform 影响。不能用 rect —— 场景层滑入时带 translateX(100%)，
+     那一刻量到的 x 会偏出整整一屏（实测 716 而不是 326），
+     纹理里的轨道就画到屏幕外去了。 */
+  let ox = 0, node = stSwEls[0].sw;
+  while (node && node !== ph) { ox += node.offsetLeft; node = node.offsetParent; }
+  const w0 = stSwEls[0].sw.offsetWidth || 56;
+  if (ox > 0 && node === ph) stRowX = ox + w0 / 2;
+  /* 纵向仍用 rect：translateX 不影响纵向，而面板可上下滚 —— rect 天然含滚动量，
+     offsetTop 不含（会把滚动后的行画回滚动前的位置）。 */
+  const ys = stSwEls.map(e => {
+    const r = e.sw.getBoundingClientRect();
+    return (r.top + r.height / 2 - pr.top) * k;
+  });
+  if (!ys.length || !ys[0]) return false;
+  stRowY = ys;
+  /* 第 4 行（倍速滑块）：轨道宽度与中心 x 由布局实测。
+     横向同样走 offsetLeft 累加 —— 场景层滑入时带 translateX(100%)，
+     那一刻的 rect 会偏出一整屏。轨道宽 = .sl 的宽（.sl-track 是 left:0/right:0）。 */
+  const slEl = stSwEls[3] && stSwEls[3].sw;
+  if (slEl) {
+    let sx = 0, n2 = slEl;
+    while (n2 && n2 !== ph) { sx += n2.offsetLeft; n2 = n2.offsetParent; }
+    const wSl = slEl.offsetWidth || 300;
+    if (sx > 0 && n2 === ph) {
+      const g = ST_SLIDER_ROW.geo;
+      g.SW_TRACK_W = wSl;
+      g.SW_X = sx + wSl / 2;
+      g.SW_TRAVEL = Math.max(1, wSl - g.SW_THUMB_W);   // 与滑块场景同一条式子
+    }
+  }
+  return true;
+}
+
+/* 位移由 thumbStep 写内联 transform（与展示页同一条路径），JS 只更新
+   swThumbs[i].baseX —— 行程改了也不用同步第二个数。 */
+function bindStSwitch(el, i, onChange) {
+  let dragging = false, sx = 0, cur = 0, pid = null;
+  /* 行程从 CSS 变量读（与展示页同一个 --sw-travel，轨道长度改了自动跟着变）。 */
+  const travelOf = () => {
+    const v = parseFloat(getComputedStyle(el).getPropertyValue('--sw-travel'));
+    return (isFinite(v) && v > 0) ? v : 18;
+  };
+  const row = ST_ROWS[i];
+  const th = () => swThumbs[i];
+  const finish = () => {
+    el.classList.remove('dragging');
+    /* 轨道色交回 0.30s 补间（swTrackWriteDom 每帧写，与折射纹理同一个数），
+       不再清内联 background —— 清了会瞬间跳回 CSS 那个色，与玻璃里对不上。 */
+    swTrackLiveT[i] = null;
+  };
+  const commit = on => {
+    row.on = on;                    // 纹理与 DOM 的轨道色都从这里取
+    el.classList.toggle('on', on);
+    el.setAttribute('aria-checked', on ? 'true' : 'false');
+    thumbTexDirty = true;
+    finish();
+    onChange(on);
+  };
+  el.addEventListener('pointerdown', e => {
+    if (pid !== null) return;
+    pid = e.pointerId; sx = e.clientX; dragging = false;
+    cur = row.on ? 1 : 0;
+    th().dragActive = false;        // 默认是「点击」，越过容差才升级为拖动
+    th().baseX = cur * travelOf();  // 按住期间的位移基准（拖动时被覆盖）
+    swTrackLiveT[i] = null;
+    el.classList.add('press');
+    /* 白点浮起 → 变成玻璃：与开关展示页同一个函数（含「连点从当前高度续上」）。 */
+    swBeginPress(i);
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId) return;
+    const dx = e.clientX - sx;
+    if (!dragging && Math.abs(dx) > SW_DRAG_SLOP) {
+      dragging = true;
+      el.classList.add('dragging');
+      th().dragActive = true;       // 从此刻起速度才驱动惯性拉伸
+    }
+    if (!dragging) return;
+    cur = Math.max(0, Math.min(1, cur + (e.clientX - sx) / travelOf()));
+    sx = e.clientX;
+    th().baseX = cur * travelOf();
+    swTrackLiveT[i] = cur;          // 轨道色跟手：往左拖变白、往右拖变绿
+  });
+  const up = e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    const on = dragging ? (cur >= 0.5) : !row.on;
+    dragging = false;
+    commit(on);                     // 先定状态（轨道色马上开始渐变）
+    /* 松手 → 玻璃沉下去（与展示页 releasePressed 同一组赋值）。
+       展示页那段最短按住时长 SW_MIN_PRESS_MS 现在是 0，这里不必再走定时器。 */
+    const t = th();
+    t.liftHeld = false; t.jelHeld = false; t.jelVel = 0; t.dragActive = false;
+    t.mustRise = t.lift < LIFT_MIN_RISE;
+    el.classList.remove('press');
+    /* 错开一帧交回 CSS：同帧既恢复 transition 又清内联值，浏览器会直接跳过去，
+       那一下弹性回弹就没了（与展示页同一条注释）。 */
+    requestAnimationFrame(() => {
+      el.classList.remove('dragging');
+      const tel = thumbEls[i];
+      if (tel) tel.style.transform = '';
+    });
+  };
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('lostpointercapture', up);
+  /* 键盘可访问：与 role="switch" 配套。同样给一次完整的浮起—沉降，
+     否则键盘切换时没有玻璃动画。 */
+  el.addEventListener('keydown', e => {
+    if (e.key !== ' ' && e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!e.repeat) {
+      el.classList.add('press');
+      swBeginPress(i);
+    }
+  });
+  el.addEventListener('keyup', e => {
+    if (e.key !== ' ' && e.key !== 'Enter') return;
+    commit(!row.on);
+    const t = th();
+    t.liftHeld = false; t.jelHeld = false; t.jelVel = 0; t.dragActive = false;
+    el.classList.remove('press');
+    requestAnimationFrame(() => {
+      const tel = thumbEls[i];
+      if (tel) tel.style.transform = '';
+    });
+  });
+  return commit;
+}
+
+/* ---- 倍速滑块：0.5× ~ 2.0×，步进 0.1 ----
+   不用原生 <input type="range">：各内核（尤其国产那批）对 thumb 的样式支持
+   差异很大，画出来不是同一颗白点。自己画的另一个好处是拖拽逻辑与上面
+   的开关完全一致（同一套 pointerdown / move / up）。 */
+const SPEED_MIN = 0.5, SPEED_MAX = 2.0, SPEED_STEP = 0.1;
+/* 设置页的「过渡动画倍速」：与滑块展示页**同一套** .sl DOM、同一条按下浮起 /
+   拖动跟手路径（swBeginPress / sliderSetT / slJumpStep），只是几何走这一行自己的
+   geo —— 同一屏还有三个开关，场景级那套常量是开关的，不能直接拿来用。
+   值域 0.5~2.0 步进 0.1：白块本身连续滑动（iOS 的滑杆就是连续的），
+   读数与应用的值才量化到 0.1，避免显示 1.37× 这种数。 */
+function bindStSlider(el, i, onChange) {
+  if (!el) return;
+  const row = ST_SLIDER_ROW;
+  let pid = null, dragging = false, sxPx = 0, startT = 0, grabOff = 0;
+  const rowOff = () => {
+    const r = document.getElementById('stRowSpeed');
+    return !!(r && r.classList.contains('off'));
+  };
+  const curT = () => Math.max(0, Math.min(1, typeof row.on === 'number' ? row.on : 0));
+  el.addEventListener('pointerdown', e => {
+    if (pid !== null || sceneMode !== 'settings' || rowOff()) return;
+    pid = e.pointerId;
+    const pr = phone.getBoundingClientRect();
+    const k = PHONE_W / (pr.width || PHONE_W);
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) * k;      // 相对 .sl 左缘的手机坐标
+    bindRowGeo(i);
+    const thumbL = sliderThumbX(curT()), thumbR = thumbL + SW_THUMB_W;
+    /* 点在白块上就保持抓取偏移（不跳）；点在轨道上直接跳过去 —— 与 UISlider 一致。 */
+    grabOff = (px >= thumbL && px <= thumbR) ? (px - thumbL) : SW_THUMB_W / 2;
+    startT = Math.max(0, Math.min(1, (px - grabOff) / SW_TRAVEL));
+    unbindRowGeo();
+    sxPx = e.clientX; dragging = false;
+    swThumbs[i].dragActive = false;
+    el.classList.add('press');
+    swBeginPress(i);              // 玻璃浮起（与展示页同一个函数）
+    /* 点在轨道上：蓝条与白块一起滑过去，不瞬移（见 slJumpStep）。 */
+    startSliderJump(i, startT);
+    onChange(startT);             // 读数立刻跟上，白块在后面滑
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId) return;
+    if (!dragging && Math.abs(e.clientX - sxPx) > SW_DRAG_SLOP) {
+      dragging = true;
+      el.classList.add('drag');            // 关掉过渡，跟手才不拖沓
+      swThumbs[i].dragActive = true;       // 从此刻起速度才驱动惯性拉伸
+      /* 跳转补间还在跑就取消，但要以「补间当前到达的位置」重新起算 ——
+         否则手指一动白块会先跳回起点再跟手。 */
+      if (slJump[i].active) {
+        cancelSliderJump(i);
+        startT = curT();
+        sxPx = e.clientX;
+      }
+    }
+    if (!dragging) return;
+    const pr = phone.getBoundingClientRect();
+    const k = PHONE_W / (pr.width || PHONE_W);
+    bindRowGeo(i);
+    sliderSetT(i, startT + (e.clientX - sxPx) * k / SW_TRAVEL);
+    unbindRowGeo();
+    onChange(curT());
+  });
+  const finish = () => {
+    if (pid === null) return;
+    pid = null; dragging = false;
+    el.classList.remove('press');
+    el.classList.remove('drag');
+    const t = swThumbs[i];
+    t.liftHeld = false; t.jelHeld = false; t.jelVel = 0; t.dragActive = false;
+    t.mustRise = t.lift < LIFT_MIN_RISE;
+    /* 错开一帧交回 CSS：同帧既恢复 transition 又清内联值，浏览器会直接跳过去。 */
+    requestAnimationFrame(() => {
+      const te = switchEls[i] && switchEls[i].thumb;
+      if (te) te.style.transform = '';
+    });
+  };
+  el.addEventListener('pointerup', finish);
+  el.addEventListener('pointercancel', finish);
+  el.addEventListener('lostpointercapture', finish);
+  /* 键盘：方向键 ±0.1，同样走跳转补间。 */
+  el.addEventListener('keydown', e => {
+    if (sceneMode !== 'settings' || rowOff()) return;
+    const d = (e.key === 'ArrowRight' || e.key === 'ArrowUp') ? 1
+            : (e.key === 'ArrowLeft' || e.key === 'ArrowDown') ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const step = SPEED_STEP / (SPEED_MAX - SPEED_MIN);
+    const to = Math.max(0, Math.min(1, curT() + d * step));
+    startSliderJump(i, to);
+    onChange(to);
+  });
+}
+
+function bindStRange(root, fill, knob, valEl, onChange) {
+  let pid = null;
+  const W = () => root.clientWidth || 128;
+  const knobMax = () => Math.max(0, W() - 20);           // 圆点直径 20
+  const tOf = v => (v - SPEED_MIN) / (SPEED_MAX - SPEED_MIN);
+  const quant = v => Math.round(v / SPEED_STEP) * SPEED_STEP;
+  const paint = v => {
+    const t = tOf(v);
+    fill.style.width = (t * 100).toFixed(2) + '%';
+    knob.style.transform = 'translateX(' + (t * knobMax()).toFixed(2) + 'px)';
+    valEl.textContent = v.toFixed(1) + '×';
+    root.setAttribute('aria-valuenow', v.toFixed(1));
+  };
+  const at = clientX => {
+    const r = root.getBoundingClientRect();
+    const t = Math.max(0, Math.min(1, (clientX - r.left - 10) / Math.max(1, knobMax())));
+    return quant(SPEED_MIN + t * (SPEED_MAX - SPEED_MIN));
+  };
+  root.addEventListener('pointerdown', e => {
+    if (pid !== null) return;
+    pid = e.pointerId;
+    try { root.setPointerCapture(e.pointerId); } catch (_) {}
+    onChange(at(e.clientX));
+    e.preventDefault();
+  });
+  root.addEventListener('pointermove', e => { if (pid === e.pointerId) onChange(at(e.clientX)); });
+  const up = e => { if (pid === e.pointerId) pid = null; };
+  root.addEventListener('pointerup', up);
+  root.addEventListener('pointercancel', up);
+  root.addEventListener('keydown', e => {
+    let d = 0;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') d = -SPEED_STEP;
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') d = SPEED_STEP;
+    else return;
+    e.preventDefault();
+    onChange(quant((parseFloat(root.getAttribute('aria-valuenow')) || 1) + d));
+  });
+  return paint;
+}
+
+/* ---- 性能浮标 ----
+   两个开关都关时既不显示也不写文本（applyPerfBadge 直接 display:none），
+   主循环里的采样也整个跳过 —— 关着就是零开销。
+   pointer-events:none：它盖在场景上，绝不能吃掉顶栏按钮和背景拖动。
+   ⚠ 声明必须在下面的 initSettings 之前：那个 IIFE 是顶层同步执行的，
+   里面要调 applyPerfBadge() 读 perfBadgeEl，放在后面会撞 TDZ。 */
+const perfBadgeEl = document.getElementById('perfBadge');
+let perfFrames = 0, perfAcc = 0, perfFps = 0, perfMs = 0, perfRender = 0;
+function applyPerfBadge() {
+  if (!perfBadgeEl) return;
+  const on = settings.fps || settings.perf;
+  perfBadgeEl.classList.toggle('show', on);
+  perfBadgeEl.classList.toggle('detail', settings.perf);
+  if (!on) return;                              // 关着不写文本，也不清零计数器
+  perfBadgeEl.textContent = settings.perf ? 'FPS  --\n帧   -- ms' : '-- FPS';
+}
+function perfSample(renderMs, dtMs) {
+  if (!settings.fps && !settings.perf) return;
+  perfFrames++; perfAcc += dtMs;
+  perfMs = dtMs;
+  perfRender = perfRender * 0.8 + renderMs * 0.2;      // 轻平滑，数字不会乱跳
+  if (perfAcc < 400) return;
+  perfFps = perfFrames / (perfAcc / 1000);
+  perfFrames = 0; perfAcc = 0;
+  if (!perfBadgeEl) return;
+  if (settings.perf) {
+    let n = 0;
+    for (const g of glasses) if (!g.hidden) n++;
+    perfBadgeEl.textContent =
+      'FPS  ' + perfFps.toFixed(0) + '\n' +
+      '帧   ' + perfMs.toFixed(1) + ' ms\n' +
+      '渲染 ' + perfRender.toFixed(1) + ' ms\n' +
+      '玻璃 ' + n;
+  } else {
+    perfBadgeEl.textContent = perfFps.toFixed(0) + ' FPS';
+  }
+}
+
+/* ---- 组装设置页 ---- */
+(function initSettings() {
+  const swAnim = document.getElementById('stSwAnim');
+  const swFps  = document.getElementById('stSwFps');
+  const swPerf = document.getElementById('stSwPerf');
+  const rowSpeed = document.getElementById('stRowSpeed');
+  const sliderEl = document.getElementById('stSlider');
+  const valEl  = document.getElementById('stVal');
+  if (!swAnim) return;                       // 面板不存在（老版本 HTML）就整体跳过
+
+  /* 倍速 = 玻璃滑块（0.5× ~ 2.0×）。t∈[0,1] 是滑块位置，值 = 0.5 + t×1.5，
+     量化到 0.1 之后再应用与显示（白块本身连续滑动，跟 iOS 一样）。 */
+  const tOfSpeed = v => (v - SPEED_MIN) / (SPEED_MAX - SPEED_MIN);
+  const quantSpeed = v => Math.min(SPEED_MAX, Math.max(SPEED_MIN,
+                        Math.round(v / SPEED_STEP) * SPEED_STEP));
+  const onSpeedT = t => {
+    const v = quantSpeed(SPEED_MIN + Math.max(0, Math.min(1, t)) * (SPEED_MAX - SPEED_MIN));
+    settings.speed = v;
+    valEl.textContent = v.toFixed(1) + '×';
+    if (sliderEl) sliderEl.setAttribute('aria-valuenow', v.toFixed(1));
+    applyUiSpeed();
+    saveSettings();
+  };
+  /* 初始进度必须写进 row.on：玻璃折射纹理里的蓝条分界是从这里取的，
+     只改 DOM 的话玻璃里透出的还是默认 0（全空）。 */
+  ST_SLIDER_ROW.on = tOfSpeed(settings.speed);
+  onSpeedT(ST_SLIDER_ROW.on);
+  bindStSlider(sliderEl, 3, onSpeedT);
+
+  const syncSpeedEnabled = () => { rowSpeed.classList.toggle('off', !settings.anim); };
+  bindStSwitch(swAnim, 0, on => {
+    settings.anim = on;
+    swAnim.classList.toggle('on', on);
+    applyUiSpeed();
+    syncSpeedEnabled();
+    saveSettings();
+  });
+  bindStSwitch(swFps,  1, on => { settings.fps = on;  saveSettings(); applyPerfBadge(); });
+  bindStSwitch(swPerf, 2, on => { settings.perf = on; saveSettings(); applyPerfBadge(); });
+
+  /* 初始态：DOM 上的 class 是写死的默认值，这里按读出来的设置对齐一次，
+     免得 localStorage 里存了「关」但界面显示「开」。
+     ST_ROWS[i].on 必须同步写 —— 折射纹理里的轨道色是从这里取的，
+     只改 DOM class 的话玻璃里透出的还是写死默认值那一种。 */
+  const stInit = [[swAnim, settings.anim], [swFps, settings.fps], [swPerf, settings.perf]];
+  stInit.forEach(([el, on], i) => {
+    ST_ROWS[i].on = !!on;
+    el.classList.toggle('on', !!on);
+    el.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  syncSpeedEnabled();
+  applyUiSpeed();
+  applyPerfBadge();
+  /* 面板可上下滚：滚动后三行的 y 变了，折射纹理里的轨道必须跟着挪，
+     否则玻璃折射出来的是滚动前那一条（错位）。
+     stMeasure() 会重建 stRowY 数组，所以这里要重新绑定 swRowY ——
+     它原本指向的是滚动前那个数组对象。只重测 + 置脏，滚动本身不重画。 */
+  const sc = document.querySelector('.st-scroll');
+  if (sc) sc.addEventListener('scroll', () => {
+    if (sceneMode !== 'settings') return;
+    if (stMeasure()) { swRowY = stRowY; thumbTexDirty = true; }
+  }, { passive: true });
+
+  /* 「恢复默认」：底部那块玻璃（glasses[6]）在设置页被复用成这个按钮。
+     四项全部回到出厂值 —— 过渡动画 开 / 倍速 1.0× / 显示帧率 关 / 性能监测 关。
+     必须把 DOM class、ST_ROWS[i].on、滑块位置、读数、--ui-dur、性能浮标
+     全部同步一遍：折射纹理里的轨道色和蓝条分界是从 ST_ROWS.on 取的，
+     只改 DOM 的话玻璃里透出来的还是改之前那一种。 */
+  window.__stRestore = function restoreDefaults() {
+    settings.anim = true; settings.speed = 1.0; settings.fps = false; settings.perf = false;
+    stInit.forEach(([el, on], i) => {
+      ST_ROWS[i].on = !!on;
+      el.classList.toggle('on', !!on);
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    ST_SLIDER_ROW.on = tOfSpeed(1.0);
+    /* 走 onSpeedT 而不是手写 valEl —— 它顺带写 aria-valuenow 和 --ui-dur。 */
+    onSpeedT(ST_SLIDER_ROW.on);
+    /* 白块位移 / 蓝条宽度 / 玻璃同心，全部由 syncSliderPositions 按 row.on 算：
+       它内部 bindRowGeo 换成这一行自己的几何（sliderThumbTX 读全局 SW_TRAVEL，
+       直接手写 px 会因轨道宽不同（设置页 318 vs 展示页 300）而错位）。 */
+    syncSliderPositions();
+    syncSpeedEnabled();
+    applyUiSpeed();
+    applyPerfBadge();
+    thumbTexDirty = true;
+    saveSettingsIfAny();
+  };
+  /* 设置不再落盘（关掉网页即消失），所以这里没有真正要写的东西 ——
+     留一个空钩子，方便以后改回持久化时只动这一处。 */
+  function saveSettingsIfAny() {}
+})();
 
 /* ================= 目录页 / 场景切换 =================
    目前只有一个场景（玻璃按钮），所以目录里就这一项。 */
@@ -7589,18 +8471,31 @@ function showScene(mode) {
   /* 见 setSceneMode 末尾：切场景本身不产生任何动画，必须显式要求重画，
      否则「静止跳过」会让画面停在上一场景的旧帧上。 */
   forceRenderNext = true;
-  /* 进时钟页立刻对齐当前时间：离开期间分钟可能已经翻过，
-     而上面的每秒检查在别的场景是跳过的。文本没变的话 updateClockText 直接返回。
-     ⚠ 这里必须**现场烘**（不能挂起延后）：进场时若沿用上次那张旧纹理，会先闪一下
-     上一分钟的字再跳对 —— 那比多花几百毫秒更刺眼。此刻刚点完菜单，画面上没有
-     东西在动，代价看不见。 */
-  if (mode === 'clock') { clockPending = false; updateClockText(); }
+  /* 进时钟页对齐当前时间：离开期间分钟可能已经翻过，而上面的检查在非时钟页是跳过的。
+     ⚠ 但不能在点击这一下**同步烘**：一次几百毫秒，点了要愣一下才开始滑入，就是之前
+     那个「进场有延迟」。也不能只是挂 clockPending 延后 —— 那会先沿用旧纹理，
+     进场先闪一下上一分钟的字。
+     做法：让浏览器先把这一帧（menu-open 摘掉 → .scene-ui 开始滑入）画出去，再烘。
+     滑入是 transform 过渡、跑在合成器线程上，主线程被烘占住它也照滑；等烘完（几百
+     毫秒）字正好滑到位，进场看到的就是当前分钟。文本没变的话 updateClockText 直接
+     返回，等于零成本。 */
+  if (mode === 'clock') {
+    clockPending = false;
+    clockLastCheck = 0;
+    requestAnimationFrame(() => setTimeout(() => {
+      if (menuOpen || sceneMode !== 'clock') return;   // 期间又退回目录 / 切走了就算了
+      clockPending = false;
+      updateClockText();
+    }, 0));
+  }
   /* 滑入那 0.38s 先不画渐变模糊（见 CSS 里 .pb-wait 的说明）—— 只在这一个场景加，
      其它场景没有 backdrop-filter，多等这几百毫秒毫无收益。 */
   if (mode === 'blur') {
     document.body.classList.add('pb-wait');
     clearTimeout(_pbWaitT);
-    _pbWaitT = setTimeout(() => document.body.classList.remove('pb-wait'), PB_ENTER_WAIT);
+    /* 这段等待是「滑入动画走完没」，所以必须跟着倍速一起缩放 ——
+       否则 2× 时带子会白白多等 0.22s 才显示。 */
+    _pbWaitT = setTimeout(() => document.body.classList.remove('pb-wait'), uiScaledMs(PB_ENTER_WAIT));
   }
   navPushScene();      // 进场景 = 压一条历史，系统返回键才有的退
 }
@@ -7623,6 +8518,10 @@ document.getElementById('menuDialogItem').addEventListener('click', () => showSc
 document.getElementById('menuClockItem').addEventListener('click', () => showScene('clock'));
 // 目录里点「模糊」→ 同属场景层（背景 / 顶栏 / 选择图片都在），中间先留空
 document.getElementById('menuBlurItem').addEventListener('click', () => showScene('blur'));
+// 「其他」分类：设置 / 关于 —— 与模糊同一套干净底板，但底部「选择图片」去掉、背景全白，
+// 中间先留空（内容后续往 #settingsPanel / #aboutPanel 里填）。
+document.getElementById('menuSettingsItem').addEventListener('click', () => showScene('settings'));
+document.getElementById('menuAboutItem').addEventListener('click', () => showScene('about'));
 
 /* ================= 场景内容切换：玻璃按钮 / 开关 =================
    两个场景共用同一个 WebGL 场景、同一张流体背景、同一套顶栏与「选择图片」，
@@ -7642,7 +8541,7 @@ function setSceneMode(mode) {
      不能只等 thumbStep 去清 —— 切场景这一帧可能被「静止整帧跳过」吃掉，
      thumbStep 压根不跑，残留就会一直留在屏幕上（见 clearThumbGlassOnce 注释）。
      开关场景（switches）同属「要画」的那三个，不能清。 */
-  if (mode !== 'switches' && mode !== 'slider' && mode !== 'tabbar'
+  if (mode !== 'switches' && mode !== 'slider' && mode !== 'tabbar' && mode !== 'settings'
       && typeof thumbGlassCleared !== 'undefined') {
     thumbGlassCleared = false;
     clearThumbGlassOnce();
@@ -7674,6 +8573,12 @@ function setSceneMode(mode) {
      不开 ccSheet（ccSheetOn() 只认 control），内容后续往 #blurPanel 里填。
      它自己一块专属玻璃都没有，所以只需把「共用那几块」摘干净。 */
   const bl = (mode === 'blur');
+  /* 「其他」分类：设置 / 关于 —— 与模糊 / 时钟同一套「干净底板」，
+     额外两件事：① 底部「选择图片」整块去掉（DOM 由 CSS 的 .pick-wrap 藏，
+     WebGL 那块玻璃见下面 g.pick 分支）；② 背景全白（见 plainBgOn）。 */
+  const st = (mode === 'settings');
+  const ab = (mode === 'about');
+  plainBgMode = st || ab;
   /* 中间那四块玻璃按钮在开关 / 滑块 / 标签栏 / 控制中心四个场景里都要摘掉 ——
      开关场景换成 DOM 开关，滑块场景换成细长调节杆，标签栏场景是条 + 搜索按钮，
      控制中心场景暂空。
@@ -7753,9 +8658,26 @@ function setSceneMode(mode) {
       g.hidden = !ck;
       return;
     }
+    /* 底部「选择图片」：关于页不要；设置页留着当「恢复默认」按钮
+       （DOM 文案由下面的 syncPickLabel 切换，点击行为见 pickBtn 的 click 绑定）。
+       它不带 mode（故意的 —— 挂了 mode 会被别的场景一起摘掉），所以只能靠
+       g.pick 单独判；必须放在下面那行 `if (g.mode !== 'buttons') return;`
+       之前，否则会先被 return 掉，hidden 永远切不动。
+       DOM 那块（.pick-btn / .pick-hit）由 CSS 的 .pick-wrap 一起藏掉。 */
+    if (g.pick) {
+      g.hidden = ab;
+      syncPickLabel();
+      if (ab) {
+        g.glowAmt = 0; g.glowAmtS = 0;
+        g.jAmt = 0; g.jTr = 0; g.jVel = 0; g.jTrV = 0;
+        g._ox = 0; g._oy = 0; g.jHeld = false;
+        g.lift = 0; g.liftV = 0; g.liftHeld = false; g.liftMustRise = false;
+      }
+      return;
+    }
     if (g.mode !== 'buttons') return;
-    g.hidden = sw || sl || tb || ct || pw || dg || ck || bl;
-    if (sw || sl || tb || ct || pw || dg || ck || bl) {     // 收掉残留的光，切回来时不会突然亮一下
+    g.hidden = sw || sl || tb || ct || pw || dg || ck || bl || st || ab;
+    if (sw || sl || tb || ct || pw || dg || ck || bl || st || ab) {     // 收掉残留的光，切回来时不会突然亮一下
       g.glowAmt = 0; g.glowAmtS = 0;
       g.jAmt = 0; g.jTr = 0; g.jVel = 0; g.jTrV = 0;
       g._ox = 0; g._oy = 0; g.jHeld = false;
@@ -7779,7 +8701,8 @@ function setSceneMode(mode) {
      标签栏场景目前中间是空的：switchEls 指向空数组，thumbEls / trackEls 也跟着为空，
      thumbStep 里的所有逐行循环（弹簧、纹理、玻璃摆位）自然一趟都不跑，
      等于「没有控件」而不是「控件还在但藏着」—— 不会留下半浮起的玻璃。 */
-  switchEls = (ct || pw || dg || ck || bl) ? swEmptyEls : (tb ? tabbarEls : (sl ? sliderEls : switchElsBase));
+  switchEls = (ct || pw || dg || ck || bl || ab) ? swEmptyEls
+            : (st ? stSwEls : (tb ? tabbarEls : (sl ? sliderEls : switchElsBase)));
   thumbEls  = switchEls.map(e => e.thumb);
   trackEls  = switchEls.map(e => e.track);
   applySwGeometry(tb ? 'tabbar' : (sl ? 'slider' : 'switches'));
@@ -7791,10 +8714,26 @@ function setSceneMode(mode) {
   document.body.classList.toggle('scene-dialog', dg);
   document.body.classList.toggle('scene-clock', ck);
   document.body.classList.toggle('scene-blur', bl);
+  document.body.classList.toggle('scene-settings', st);
+  document.body.classList.toggle('scene-about', ab);
+  /* 设置页：几何在 body class 生效之后才实测（面板此刻才 display:block，
+     之前 rect 全是 0），再整体换掉 swRows / swRowY / SW_X。
+     放在 toggle 之后是因为 .settings-panel 靠 body.scene-settings 才显示，
+     早一步量到的 y 全是 0，纹理里的轨道会画到屏幕顶部。 */
+  if (st) {
+    stMeasure();
+    swRows = ST_ROWS;
+    swRowY = stRowY;
+    SW_X   = stRowX;
+    /* 倍速那一行是滑块：白块位置 / 蓝条宽度要按它自己的行程摆一次，
+       否则用的是开关场景那套常量（行程 18），白块会缩在最左边。 */
+    syncSliderPositions();
+    thumbTexDirty = true;
+  }
   /* 标签栏场景没有控件：玻璃的投影 div 是常驻元素（不随场景重建），
      渲染循环又因为 thumbEls 为空而一趟不跑，不显式归零会把上一个场景
      残留的投影带进新页面 —— 中间凭空多出一团阴影。 */
-  if (tb || ct || pw || dg || ck || bl) thumbShadowEls.forEach(d => { d.style.opacity = '0'; });
+  if (tb || ct || pw || dg || ck || bl || st || ab) thumbShadowEls.forEach(d => { d.style.opacity = '0'; });
   /* 整条 toolbar 的上抬量归零：
      标签栏玻璃 hidden 之后 syncLabels 会 early-return，不再重写 iconEls[i].transform，
      残留的 translateY 会一直挂在 .tbar / .tbar-search 上，下次切回来整条是歪的。 */
@@ -7811,6 +8750,8 @@ function setSceneMode(mode) {
   if (dialogPanelEl) dialogPanelEl.setAttribute('aria-hidden', dg ? 'false' : 'true');
   if (clockPanelEl) clockPanelEl.setAttribute('aria-hidden', ck ? 'false' : 'true');
   if (blurPanelEl) blurPanelEl.setAttribute('aria-hidden', bl ? 'false' : 'true');
+  if (settingsPanelEl) settingsPanelEl.setAttribute('aria-hidden', st ? 'false' : 'true');
+  if (aboutPanelEl) aboutPanelEl.setAttribute('aria-hidden', ab ? 'false' : 'true');
   /* 控制中心：进场 = 从 0 弹到 1（渐渐淡入 + 微微向下移，与手机下拉一致）；
      离场 = 复位成 1 并清掉 DOM 上残留的半透明 / 平移，免得切到别的场景还留着。
      其余场景 ccRevealStep 首行就 return，这两行对它们没有任何作用。 */
@@ -7993,7 +8934,7 @@ for (let i = 0; i < TBAR_N; i++) tbarColorApply(i);
    四行，y 与开关场景严格对齐（同一份 SW_Y）。初始位置分别是最左 / 最右 /
    中间 / 中间 —— 正好对应参考图里的四个状态（静止在最左、静止在最右、
    拖住时玻璃上浮、停在中间静止时玻璃下沉变回白色）。 */
-const SLIDER_ROWS = SW_Y.map((y, i) => ({ y, on: [0, 1, 0.5, 0.5][i] }));
+const SLIDER_ROWS = SW_Y.map((y, i) => ({ y, on: [0, 1, 0.5, 0.5][i], sl: true }));
 const sliderPanelEl = document.getElementById('sliderPanel');
 const sliderEls = SLIDER_ROWS.map(row => {
   const wrap = document.createElement('div');
@@ -8026,7 +8967,7 @@ const SL_JUMP_MS = 220;                 // 与 .sl-thumb 的 CSS 过渡时长一
 const slJump = SLIDER_ROWS.map(() => ({ active: false, from: 0, to: 0, t0: 0 }));
 
 function sliderSetT(i, t) {
-  const el = sliderEls[i];
+  const el = switchEls[i];
   if (!el) return;
   t = Math.max(0, Math.min(1, t));
   el.row.on = t;
@@ -8036,30 +8977,32 @@ function sliderSetT(i, t) {
   thumbTexDirty = true;                 // 折射纹理里的亮蓝分界要跟着动
 }
 function startSliderJump(i, toT) {
-  const row = SLIDER_ROWS[i];
+  const row = swRows[i];
   const cur = Math.max(0, Math.min(1, typeof row.on === 'number' ? row.on : 0));
   toT = Math.max(0, Math.min(1, toT));
-  if (Math.abs(toT - cur) < 0.002) { sliderSetT(i, toT); return; }   // 没挪窝就别启动
+  if (Math.abs(toT - cur) < 0.002) { bindRowGeo(i); sliderSetT(i, toT); unbindRowGeo(); return; }   // 没挪窝就别启动
   const j = slJump[i];
   j.active = true; j.from = cur; j.to = toT; j.t0 = performance.now();
-  sliderEls[i].sw.classList.add('jump');
+  const el = switchEls[i];
+  if (el) el.sw.classList.add('jump');
 }
 function cancelSliderJump(i) {
   const j = slJump[i];
   if (!j || !j.active) return;
   j.active = false;
-  const el = sliderEls[i];
+  const el = switchEls[i];
   if (el) el.sw.classList.remove('jump');
 }
 function slJumpStep() {
-  if (sceneMode !== 'slider') {
-    for (let i = 0; i < slJump.length; i++) cancelSliderJump(i);
-    return;
-  }
+  /* 不再只认 slider 场景：设置页那一行滑块也要走同一条点击跳转补间。
+     逐行判断 isSliderRow(i)，非滑块行若残留补间一律取消（兜底）。
+     几何要临时换成这一行自己的（sliderSetT / sliderThumbTX 读的是全局 SW_TRAVEL）。 */
   const now = performance.now();
-  for (let i = 0; i < slJump.length; i++) {
+  for (let i = 0; i < slJump.length && i < swRows.length; i++) {
     const j = slJump[i];
     if (!j.active) continue;
+    if (!isSliderRow(i)) { cancelSliderJump(i); continue; }
+    bindRowGeo(i);
     const u = Math.min(1, (now - j.t0) / SL_JUMP_MS);
     const e = 1 - Math.pow(1 - u, 3);   // easeOutCubic ≈ CSS 的 cubic-bezier(.42,.80,.58,1.0)
     sliderSetT(i, j.from + (j.to - j.from) * e);
@@ -8069,11 +9012,13 @@ function slJumpStep() {
          （grow>0.0005 || slJump.active）已经不成立 —— 白块就永远停在倒数第二帧，
          而蓝条（由 sliderSetT 直接改 width）已经走到终点，两者错位。
          高帧率下只差 1%，低帧率下整段跳变只剩一帧时会差很大（实测 232 vs 58）。 */
-      const te = sliderEls[i] && sliderEls[i].thumb;
+      const te = switchEls[i] && switchEls[i].thumb;
       if (te) te.style.transform = 'translateX(' + sliderThumbTX(swThumbs[i].baseX / SW_TRAVEL).toFixed(2) + 'px)';
       cancelSliderJump(i);
     }
+    unbindRowGeo();
   }
+  unbindRowGeo();
 }
 
 // 滑块 DOM 与它们的投影元素（玻璃画在 canvas 里，没有 CSS 阴影，只能由 DOM 补）
@@ -8212,7 +9157,70 @@ const swReleaseTimer = SW_Y.map(() => 0);
    开关与滑块共用同一套 thumbStep / 折射纹理 / 玻璃渲染，只有这些尺寸不同。
    必须放在所有 SW_* / GLASS_* 的 let 声明之后（避免 TDZ），
    由 setSceneMode 在切场景时调用。 */
+/* ================= 逐行几何 =================
+   SW_* / GLASS_* / THUMB_* 这一套常量原本是**场景级**的：一个场景里只有一种控件。
+   设置页要同时放开关和滑块（倍速那一行是滑块，其余三行是开关），所以给行对象挂一个
+   geo，行循环进出时临时换上 / 还原 —— 读取处一行都不用改。
+   行上没有 geo 时，换上的就是场景全局值本身，老场景逐值不变。 */
+let rowGeoCur = null;
+const rowGeoSaved = {};
+function rowGeoSave() {
+  rowGeoSaved.SW_TRACK_W = SW_TRACK_W;         rowGeoSaved.SW_TRACK_H = SW_TRACK_H;
+  rowGeoSaved.SW_PAD = SW_PAD;                 rowGeoSaved.SW_THUMB_W = SW_THUMB_W;
+  rowGeoSaved.SW_THUMB_H = SW_THUMB_H;         rowGeoSaved.SW_PRESS_GROW = SW_PRESS_GROW;
+  rowGeoSaved.SW_TRAVEL = SW_TRAVEL;           rowGeoSaved.SW_X = SW_X;
+  rowGeoSaved.GLASS_BASE_W = GLASS_BASE_W;     rowGeoSaved.GLASS_BASE_H = GLASS_BASE_H;
+  rowGeoSaved.GLASS_WS = GLASS_W_SCALE_AT_FULL;
+  rowGeoSaved.GLASS_HS = GLASS_H_SCALE_AT_FULL;
+  rowGeoSaved.GLASS_TG = GLASS_TRAVEL_GAIN;
+  rowGeoSaved.TEX_SHRINK = TEX_TRACK_SHRINK_AT_FULL;
+  rowGeoSaved.TEX_XEXT = TEX_TRACK_X_EXT_AT_FULL;
+  rowGeoSaved.EDGE_W = THUMB_EDGE_W_MUL;       rowGeoSaved.EDGE_B = THUMB_EDGE_BEND;
+  rowGeoSaved.EDGE_R = THUMB_REFRACT_MUL;
+}
+function rowGeoApply(g) {
+  SW_TRACK_W = g.SW_TRACK_W;                   SW_TRACK_H = g.SW_TRACK_H;
+  SW_PAD = g.SW_PAD;                           SW_THUMB_W = g.SW_THUMB_W;
+  SW_THUMB_H = g.SW_THUMB_H;                   SW_PRESS_GROW = g.SW_PRESS_GROW;
+  SW_TRAVEL = g.SW_TRAVEL;                     SW_X = g.SW_X;
+  GLASS_BASE_W = g.GLASS_BASE_W;               GLASS_BASE_H = g.GLASS_BASE_H;
+  GLASS_W_SCALE_AT_FULL = g.GLASS_WS;
+  GLASS_H_SCALE_AT_FULL = g.GLASS_HS;
+  GLASS_TRAVEL_GAIN = g.GLASS_TG;
+  TEX_TRACK_SHRINK_AT_FULL = g.TEX_SHRINK;
+  TEX_TRACK_X_EXT_AT_FULL = g.TEX_XEXT;
+  THUMB_EDGE_W_MUL = g.EDGE_W;                 THUMB_EDGE_BEND = g.EDGE_B;
+  THUMB_REFRACT_MUL = g.EDGE_R;
+}
+function rowGeoRestore() {
+  SW_TRACK_W = rowGeoSaved.SW_TRACK_W;         SW_TRACK_H = rowGeoSaved.SW_TRACK_H;
+  SW_PAD = rowGeoSaved.SW_PAD;                 SW_THUMB_W = rowGeoSaved.SW_THUMB_W;
+  SW_THUMB_H = rowGeoSaved.SW_THUMB_H;         SW_PRESS_GROW = rowGeoSaved.SW_PRESS_GROW;
+  SW_TRAVEL = rowGeoSaved.SW_TRAVEL;           SW_X = rowGeoSaved.SW_X;
+  GLASS_BASE_W = rowGeoSaved.GLASS_BASE_W;     GLASS_BASE_H = rowGeoSaved.GLASS_BASE_H;
+  GLASS_W_SCALE_AT_FULL = rowGeoSaved.GLASS_WS;
+  GLASS_H_SCALE_AT_FULL = rowGeoSaved.GLASS_HS;
+  GLASS_TRAVEL_GAIN = rowGeoSaved.GLASS_TG;
+  TEX_TRACK_SHRINK_AT_FULL = rowGeoSaved.TEX_SHRINK;
+  TEX_TRACK_X_EXT_AT_FULL = rowGeoSaved.TEX_XEXT;
+  THUMB_EDGE_W_MUL = rowGeoSaved.EDGE_W;       THUMB_EDGE_BEND = rowGeoSaved.EDGE_B;
+  THUMB_REFRACT_MUL = rowGeoSaved.EDGE_R;
+}
+/* 进入第 i 行 / 跳出所有行。同一行连着多次调用不重复换。 */
+function bindRowGeo(i) {
+  const r = swRows && swRows[i];
+  const g = (r && r.geo) || null;
+  if (g === rowGeoCur) return;
+  if (rowGeoCur) rowGeoRestore();
+  rowGeoCur = g;
+  if (g) { rowGeoSave(); rowGeoApply(g); }
+}
+function unbindRowGeo() { bindRowGeo(-1); }
+/* 这一行是不是滑块（连续值进度条），而不是开关（布尔） */
+function isSliderRow(i) { const r = swRows && swRows[i]; return !!(r && r.sl); }
+
 function applySwGeometry(mode) {
+  unbindRowGeo();          // 换场景前先把可能还挂着的逐行几何还原，免得污染新场景的全局值
   if (mode === 'slider') {
     /* 轨道是一条 300×8 的细线，中心 195（手机正中）；
        滑块 46×30 的白色椭圆，左右各留 0 内边距。
@@ -8376,15 +9384,22 @@ function sliderFillFrac(t) {
 /* 把滑块摆到 row.on 对应的位置（切进滑块场景、以及松手后定位置时调用）。
    拖动中不用它 —— 那期间由 thumbStep 每帧按 baseX 写 transform。 */
 function syncSliderPositions() {
-  if (sceneMode !== 'slider') return;
-  for (let i = 0; i < sliderEls.length; i++) {
-    const { thumb, fill, row } = sliderEls[i];
-    const t = Math.max(0, Math.min(1, typeof row.on === 'number' ? row.on : 0));
-    const x = sliderThumbTX(t);
-    swThumbs[i].baseX = sliderThumbX(t);
-    thumb.style.transform = 'translateX(' + x.toFixed(2) + 'px)';
-    fill.style.width = (sliderFillFrac(t) * 100).toFixed(2) + '%';
-    sliderEls[i].sw.setAttribute('aria-valuenow', String(Math.round(t * 100)));
+  /* 逐行找「滑块行」而不是只认 slider 场景：设置页那一行也要同步。
+     几何必须换成该行自己的（sliderThumbTX 读全局 SW_TRAVEL / SW_THUMB_W）。 */
+  for (let i = 0; i < swRows.length; i++) {
+    if (!isSliderRow(i)) continue;
+    bindRowGeo(i);
+    const el = switchEls[i];
+    const row = swRows[i];
+    if (el && row) {
+      const t = Math.max(0, Math.min(1, typeof row.on === 'number' ? row.on : 0));
+      const x = sliderThumbTX(t);
+      swThumbs[i].baseX = sliderThumbX(t);
+      if (el.thumb) el.thumb.style.transform = 'translateX(' + x.toFixed(2) + 'px)';
+      if (el.fill) el.fill.style.width = (sliderFillFrac(t) * 100).toFixed(2) + '%';
+      el.sw.setAttribute('aria-valuenow', String(Math.round(t * 100)));
+    }
+    unbindRowGeo();
   }
 }
 
@@ -8821,6 +9836,7 @@ window.addEventListener('load', () => {
     hideBootLoader();
   });
   let _last = performance.now();
+  let _perfRenderMs = 0;
   (function loop(now) {
     const dt = Math.min(0.033, Math.max(0.001, (now - _last) / 1000));
     _last = now;
@@ -8840,7 +9856,11 @@ window.addEventListener('load', () => {
     updateJelly(dt);
     tickPointer(dt);
     syncLabels();
+    /* 渲染耗时只在「性能监测」开着时才量（两次 performance.now + 一次减法），
+       关着时 _perfRenderMs 恒为 0，perfSample 也整个跳过 —— 零开销。 */
+    const _pT0 = (settings.fps || settings.perf) ? performance.now() : 0;
     safeRender();
+    _perfRenderMs = (settings.fps || settings.perf) ? (performance.now() - _pT0) : 0;
     fabStep(dt);          // 主页圆形按钮：拖尾 + 果冻 + 内透光（与场景同一套常量）
     thumbStep(dt);        // 开关滑块：白点浮起变玻璃 / 松手沉下
     /* 标签栏的弹起倍率是本帧 thumbStep 里算出来的，而 syncLabels 在它之前跑 ——
@@ -8862,7 +9882,10 @@ window.addEventListener('load', () => {
        这块整屏（780×1688）画布仍要每帧 setClearColor + clear + render 一次，
        而且它带 preserveDrawingBuffer:true，驱动每帧还要额外保留整块缓冲。
        这正是「静止整帧跳过」收益有限的原因：主画布跳过了，这块却一直在画。 */
-    if (menuOpen || (now - _menuCloseAt) < 450) safeRenderMenu();
+    /* 主页玻璃淡出那 0.45s 同样跟着倍速缩放（见 uiScaledMs）——
+       关掉过渡动画后它就是 1ms，退出场景立刻停手，不再白画半秒。 */
+    if (menuOpen || (now - _menuCloseAt) < uiScaledMs(450)) safeRenderMenu();
+    if (settings.fps || settings.perf) perfSample(_perfRenderMs, dt * 1000);
     requestAnimationFrame(loop);
   })(performance.now());
 });
