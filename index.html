@@ -85,10 +85,10 @@
   body.menu-open .scene-ui { transform: translateX(100%); }
   /* 首屏不要动画：body 带 boot 时全部关掉 */
   body.boot .scene-layer, body.boot .scene-ui,
-  body.boot .menu-page, body.boot .menu-glass-layer,
+  body.boot .menu-root,
   body.boot .back-btn { transition: none !important; }
   @media (prefers-reduced-motion: reduce) {
-    .scene-layer, .scene-ui, .menu-page, .menu-glass-layer { transition-duration: .01s !important; }
+    .scene-layer, .scene-ui, .menu-root { transition-duration: .01s !important; }
   }
   /* 玻璃投影层：在背景之上、玻璃之下（对标 Backdrop 的 backdropShadow） */
   .glass-shadow {
@@ -881,40 +881,67 @@
      铺满整个屏幕：top:0 起，圆角跟随手机外壳。
      顶栏 z-index 更高（5），浮在它上面 —— 所以月亮按钮位置始终不变。
      内容用 padding-top 让开顶栏，但背景是整屏的。 */
+  /* ===== 翻页时主页：原来的位移淡出 + 毛玻璃模糊 =====
+     进场景时主页被推走（向左 30% 并淡出——与加模糊之前逐值相同），
+     同时糊掉；退出时同一条过渡反向播回来。
+
+     ⚠ 只加模糊这一项：位移量、淡出终点、时长曲线都保持原样，不要顺手改。
+
+     ⚠ 位移 / 淡出 / 模糊三项必须做在同一个元素上，不能分别挂在 .menu-page 和
+     .menu-glass-layer 上：那样浏览器要把整屏各糊一次，实测翻页 p95 帧间隔
+     17.2ms → 22.4ms（掉帧）；合成一层只糊一次，17.1ms，与不模糊的基线持平。
+     所以外面套了 .menu-root 当共同父层（见 HTML 里的注释）。
+
+     filter 只在「正在被推走」这个状态里给值，主页静止时是 none —— 常驻 blur(0)
+     也会让浏览器多走一趟滤镜管线，主页滚动时尤其明显。
+     none ↔ blur() 的插值按规范是把 none 当成 blur(0)，所以过渡是连续的。 */
+  .menu-root {
+    position: absolute; inset: 0; z-index: 2;
+    border-radius: var(--phone-radius);
+    transform-origin: 50% 50%;
+    /* visibility 延迟到位移结束再隐藏：既能参与过渡，又不会挡住场景。
+       四个时长都跟着 --ui-dur：位移 / 淡出 / 模糊要同步，visibility 的延迟也必须同步
+       —— 否则关掉过渡动画后菜单页还会多留 0.38s 才隐藏，那 0.38s 里它挡在最上层。 */
+    transition: transform var(--ui-dur, .38s) cubic-bezier(.32, .72, 0, 1),
+                opacity   var(--ui-dur, .38s) ease,
+                filter    var(--ui-dur, .38s) ease,
+                visibility 0s linear var(--ui-dur, .38s);
+  }
+  body.menu-open .menu-root {            /* 主页面在前 */
+    transform: none; opacity: 1; filter: none; visibility: visible;
+    transition-delay: 0s, 0s, 0s, 0s;
+  }
+  body:not(.menu-open) .menu-root {      /* 被压在下面：向左退 + 淡出（原样）+ 糊掉 */
+    transform: translateX(-30%);
+    opacity: 0; filter: blur(7px); visibility: hidden;
+  }
+  /* 设置页「翻页模糊」关掉时：整个 filter 不成立（computed = none），
+     位移与淡出照旧 —— 关掉后动画与加模糊之前逐帧相同。 */
+  body.no-menu-blur:not(.menu-open) .menu-root { filter: none; }
   /* 主页面：铺满整屏，层级在场景之下（被推进来的场景盖住），
      顶栏 z5 浮在它上面 → 月亮按钮位置始终不变。 */
   .menu-page {
     position: absolute; inset: 0;
     z-index: 2;
-    background: #fff;
+    /* 底纹直接画在自己的 background 上，不用 ::before：
+       .menu-root 上的 filter 会让 .menu-page 成为后代里的 containing block 环境，
+       ::before 的 position:fixed 会失效并跟着内容一起滚，滚一段以后屏幕下半截就
+       没有底纹了。background 天然不随内容滚动，正是原来 fixed 想要的那个效果。 */
+    background:
+      radial-gradient(120% 70% at 12% 8%,  rgba(37, 99, 235, 0.11), transparent 60%),
+      radial-gradient(100% 60% at 92% 88%, rgba(234, 88, 12, 0.09), transparent 62%),
+      radial-gradient(90% 50% at 90% 5%,   rgba(56, 189, 248, 0.24), transparent 64%),
+      #fff;
     border-radius: var(--phone-radius);
     padding: 100px 20px 24px;      /* 100 = 顶栏 92 + 一点呼吸 */
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    /* visibility 延迟到位移结束再隐藏：既能参与过渡，又不会挡住场景。
-       三个时长都跟着 --ui-dur：位移 / 淡出要同步，visibility 的延迟也必须同步
-       —— 否则关掉过渡动画后菜单页还会多留 0.38s 才隐藏，那 0.38s 里它挡在最上层。 */
-    transition: transform var(--ui-dur, .38s) cubic-bezier(.32, .72, 0, 1),
-                opacity   var(--ui-dur, .38s) ease,
-                visibility 0s linear var(--ui-dur, .38s);
-  }
-  body.menu-open .menu-page,             /* 主页面在前 */
-  body.menu-open .menu-glass-layer {
-    transform: none; opacity: 1; visibility: visible;
-    transition-delay: 0s, 0s, 0s;
-  }
-  body:not(.menu-open) .menu-page,       /* 被压在下面：向左退 + 淡出 */
-  body:not(.menu-open) .menu-glass-layer {
-    transform: translateX(-30%); opacity: 0; visibility: hidden;
   }
   /* 主页玻璃层：装着「用同一套着色器渲染的圆形玻璃按钮」+ DOM 图标。
      z3 压在 menu-page(z2) 之上，图标再压在 canvas 之上。 */
   .menu-glass-layer {
     position: absolute; inset: 0; z-index: 3; pointer-events: none;
     border-radius: var(--phone-radius); overflow: hidden;
-    transition: transform var(--ui-dur, .38s) cubic-bezier(.32, .72, 0, 1),
-                opacity   var(--ui-dur, .38s) ease,
-                visibility 0s linear var(--ui-dur, .38s);
   }
   #menu-glass-canvas {
     position: absolute; inset: 0;
@@ -923,22 +950,12 @@
   }
   .gmenu-fab { pointer-events: auto; }
   .topbar { z-index: 5; }
-  body.dark .menu-page { background: #17191d; }
-  /* 极淡的底纹：纯色板上毛玻璃糊不出东西、看着像一块塑料。
-     这层几乎看不见，但能给 blur 提供内容，玻璃质感立刻出来。 */
-  .menu-page::before {
-    content: ''; position: fixed; inset: 0;
-    pointer-events: none; z-index: -1;
-    background:
-      radial-gradient(120% 70% at 12% 8%,  rgba(37, 99, 235, 0.11), transparent 60%),
-      radial-gradient(100% 60% at 92% 88%, rgba(234, 88, 12, 0.09), transparent 62%),
-      radial-gradient(90% 50% at 90% 5%,   rgba(56, 189, 248, 0.24), transparent 64%);
-  }
-  body.dark .menu-page::before {
+  body.dark .menu-page {
     background:
       radial-gradient(120% 70% at 12% 8%,  rgba(56, 189, 248, 0.16), transparent 60%),
       radial-gradient(100% 60% at 92% 88%, rgba(129, 140, 248, 0.14), transparent 62%),
-      radial-gradient(90% 50% at 90% 5%,   rgba(56, 189, 248, 0.22), transparent 64%);
+      radial-gradient(90% 50% at 90% 5%,   rgba(56, 189, 248, 0.22), transparent 64%),
+      #17191d;
   }
 
   .menu-group-title {
@@ -1115,6 +1132,10 @@
 
 <div class="stage">
   <div class="phone" id="phone">
+    <!-- 主页这两层包在一起：翻页时的位移 / 淡出 / 毛玻璃模糊都做在这一层上。
+         分开做的话浏览器要各糊一次全屏（实测 p95 17.2 → 22.4ms，掉帧），
+         糊一次就几乎是免费的（17.1ms）。 -->
+    <div class="menu-root" id="menuRoot">
     <!-- 主页面在场景之下，被推进来的场景盖住 -->
     <div class="menu-page" id="menuPage" aria-hidden="false">
       <div class="menu-group-title">所有组件</div>
@@ -1144,6 +1165,7 @@
         </svg>
       </button>
     </div>
+    </div><!-- /.menu-root -->
     <!-- 场景页：整体参与位移 -->
     <div class="scene-layer" id="sceneLayer">
       <div class="phone-bg" id="bgLayer"></div>
@@ -1215,6 +1237,15 @@
                     <div class="sl-track"><div class="sl-fill" id="stSliderFill"></div></div>
                     <div class="sl-thumb"></div>
                   </div>
+                </div>
+              </div>
+              <!-- 翻页模糊：只切「主页被推走时糊不糊」，不动位移/淡出/时长。 -->
+              <div class="st-row" id="stRowBlur">
+                <div class="st-row-label">翻页模糊</div>
+                <div class="sw st-sw on" id="stSwBlur" role="switch" tabindex="0"
+                     aria-label="翻页模糊" aria-checked="true">
+                  <div class="sw-track"></div>
+                  <div class="sw-thumb"></div>
                 </div>
               </div>
             </div>
@@ -3750,7 +3781,12 @@ function swRowT(i) {
    phase 0=idle 1=rise 2=hold 3=fall，tp = 当前相位已过毫秒。
    lift 完全由相位内的归一化进度经 easing 算出，grow 再由 lift 幂映射得到 ——
    两者严格同步，不会各走各的节奏。 */
-const swThumbs = SW_Y.map(() => ({ lift: 0, liftV: 0, liftHeld: false, mustRise: false,
+/* 槽位数取 max(SW_Y.length, 5)：开关场景 4 行，而设置页有 5 个控件
+   （4 个开关 + 1 个倍速滑块），多出来的第 5 个槽位在别的场景是空闲的
+   （lift=0、thumbEls 里也没有对应项，渲染循环靠 min 长度保护，一趟都不跑）。
+   不能直接用 SW_Y.length —— 那样第 5 个控件拿不到 thumb 状态，按下不会浮起。 */
+const SW_THUMB_N = Math.max(SW_Y.length, 5);
+const swThumbs = Array.from({ length: SW_THUMB_N }, () => ({ lift: 0, liftV: 0, liftHeld: false, mustRise: false,
                                    grow: 0, baseX: 0, phase: 0, tp: 0,
                                    /* 回弹形变：与按钮的 jAmt 同一个含义（正=沿轴拉伸/收腰，
                                       负=压缩/鼓腰），由同一套弹簧参数驱动。 */
@@ -8341,12 +8377,12 @@ function renderMenuGlass() {
 }
 
 /* ================= 设置页（「其他」分类）=================
-   四项：过渡动画（默认开）/ 过渡动画倍速（默认 1.0×）/ 显示帧率（默认关）/
-   性能监测工具（默认关）。
+   五项：过渡动画（默认开）/ 过渡动画倍速（默认 1.0×）/ 翻页模糊（默认开）/
+   显示帧率（默认关）/ 性能监测工具（默认关）。
    倍速只压缩**时长**、不动曲线：翻页那条 cubic-bezier(.32, .72, 0, 1) 原样保留，
    所以「快」是同一条曲线更快走完，不是换成另一条更陡的曲线 —— 不会有新的稳定性问题。 */
 const SETTINGS_KEY = 'lg_settings_v1';
-const settings = { anim: true, speed: 1.0, fps: false, perf: false };
+const settings = { anim: true, speed: 1.0, blur: true, fps: false, perf: false };
 /* 设置不持久化：只活在内存里，关掉网页（或刷新）就回到上面的默认值。
    顺带把以前存过的旧存档清掉 —— 光让新设置不写入是不够的，历史数据还躺在
    浏览器里，下次进来照样会被读出来。 */
@@ -8363,6 +8399,14 @@ function uiScaledMs(ms) {
 }
 function applyUiSpeed() {
   document.documentElement.style.setProperty('--ui-dur', (uiScaledMs(UI_DUR_BASE) / 1000).toFixed(3) + 's');
+}
+/* 翻页模糊：只切「主页被推走时糊不糊」——位移 / 淡出 / 时长曲线一个字都不动，
+   所以关掉之后动画与加模糊之前逐帧相同。
+   用 body class 而不是把半径写成 blur(0px)：后者 computed 仍是 blur(0px)，
+   filter 依旧成立 → .menu-root 照样成为后代的 containing block 环境，
+   浏览器也照样多走一趟滤镜管线。class 关掉时 computed 是 filter: none。 */
+function applyMenuBlur() {
+  document.body.classList.toggle('no-menu-blur', !settings.blur);
 }
 
 /* ---- 行内开关：与开关展示页同款 ----
@@ -8385,7 +8429,9 @@ function applyUiSpeed() {
    localStorage 读出来的状态写进 ST_ROWS[i].on，晚声明会撞 TDZ。
    stSwEls 的结构与 switchElsBase 完全一致（sw / thumb / track / row），
    所以 switchEls 指向它之后，thumbStep / 纹理 / 玻璃渲染一趟都不用改。 */
-const ST_SW_IDS = ['stSwAnim', 'stSwFps', 'stSwPerf'];
+/* 索引 0=过渡动画 1=翻页模糊 2=显示帧率 3=性能监测；
+   倍速滑块单独 push（索引 4，见下面 ST_SLIDER_ROW）。 */
+const ST_SW_IDS = ['stSwAnim', 'stSwBlur', 'stSwFps', 'stSwPerf'];
 const ST_ROWS = ST_SW_IDS.map(() => ({ y: 0, on: false }));
 const stSwEls = ST_SW_IDS.map((id, i) => {
   const el = document.getElementById(id);
@@ -8424,7 +8470,7 @@ ST_ROWS.push(ST_SLIDER_ROW);
      而纵向不受横向位移影响，滚动时反而必须重读 —— 否则纹理里的轨道
      画在滚动前的位置，玻璃折射出来的是错位的一条。 */
 let stRowX = 326;
-let stRowY = [165, 316, 368];
+let stRowY = [165, 316, 368, 420, 470];
 function stMeasure() {
   const ph = document.querySelector('.phone');
   if (!ph || !stSwEls[0] || !stSwEls[0].sw) return false;
@@ -8447,10 +8493,10 @@ function stMeasure() {
   });
   if (!ys.length || !ys[0]) return false;
   stRowY = ys;
-  /* 第 4 行（倍速滑块）：轨道宽度与中心 x 由布局实测。
+  /* 倍速滑块（stSwEls 的最后一项）：轨道宽度与中心 x 由布局实测。
      横向同样走 offsetLeft 累加 —— 场景层滑入时带 translateX(100%)，
      那一刻的 rect 会偏出一整屏。轨道宽 = .sl 的宽（.sl-track 是 left:0/right:0）。 */
-  const slEl = stSwEls[3] && stSwEls[3].sw;
+  const slEl = stSwEls[stSwEls.length - 1] && stSwEls[stSwEls.length - 1].sw;
   if (slEl) {
     let sx = 0, n2 = slEl;
     while (n2 && n2 !== ph) { sx += n2.offsetLeft; n2 = n2.offsetParent; }
@@ -8751,6 +8797,7 @@ function perfSample(renderMs, dtMs) {
 /* ---- 组装设置页 ---- */
 (function initSettings() {
   const swAnim = document.getElementById('stSwAnim');
+  const swBlur = document.getElementById('stSwBlur');
   const swFps  = document.getElementById('stSwFps');
   const swPerf = document.getElementById('stSwPerf');
   const rowSpeed = document.getElementById('stRowSpeed');
@@ -8775,7 +8822,7 @@ function perfSample(renderMs, dtMs) {
      只改 DOM 的话玻璃里透出的还是默认 0（全空）。 */
   ST_SLIDER_ROW.on = tOfSpeed(settings.speed);
   onSpeedT(ST_SLIDER_ROW.on);
-  bindStSlider(sliderEl, 3, onSpeedT);
+  bindStSlider(sliderEl, 4, onSpeedT);
 
   const syncSpeedEnabled = () => { rowSpeed.classList.toggle('off', !settings.anim); };
   bindStSwitch(swAnim, 0, on => {
@@ -8785,14 +8832,17 @@ function perfSample(renderMs, dtMs) {
     syncSpeedEnabled();
     saveSettings();
   });
-  bindStSwitch(swFps,  1, on => { settings.fps = on;  saveSettings(); applyPerfBadge(); });
-  bindStSwitch(swPerf, 2, on => { settings.perf = on; saveSettings(); applyPerfBadge(); });
+  /* 翻页模糊：切 body class，动画本身不动。 */
+  bindStSwitch(swBlur, 1, on => { settings.blur = on; saveSettings(); applyMenuBlur(); });
+  bindStSwitch(swFps,  2, on => { settings.fps = on;  saveSettings(); applyPerfBadge(); });
+  bindStSwitch(swPerf, 3, on => { settings.perf = on; saveSettings(); applyPerfBadge(); });
 
   /* 初始态：DOM 上的 class 是写死的默认值，这里按读出来的设置对齐一次，
      免得 localStorage 里存了「关」但界面显示「开」。
      ST_ROWS[i].on 必须同步写 —— 折射纹理里的轨道色是从这里取的，
      只改 DOM class 的话玻璃里透出的还是写死默认值那一种。 */
-  const stInit = [[swAnim, settings.anim], [swFps, settings.fps], [swPerf, settings.perf]];
+  const stInit = [[swAnim, settings.anim], [swBlur, settings.blur],
+                  [swFps, settings.fps], [swPerf, settings.perf]];
   stInit.forEach(([el, on], i) => {
     ST_ROWS[i].on = !!on;
     el.classList.toggle('on', !!on);
@@ -8800,6 +8850,7 @@ function perfSample(renderMs, dtMs) {
   });
   syncSpeedEnabled();
   applyUiSpeed();
+  applyMenuBlur();
   applyPerfBadge();
   /* 面板可上下滚：滚动后三行的 y 变了，折射纹理里的轨道必须跟着挪，
      否则玻璃折射出来的是滚动前那一条（错位）。
@@ -8812,12 +8863,14 @@ function perfSample(renderMs, dtMs) {
   }, { passive: true });
 
   /* 「恢复默认」：底部那块玻璃（glasses[6]）在设置页被复用成这个按钮。
-     四项全部回到出厂值 —— 过渡动画 开 / 倍速 1.0× / 显示帧率 关 / 性能监测 关。
+     五项全部回到出厂值 —— 过渡动画 开 / 倍速 1.0× / 翻页模糊 开 /
+     显示帧率 关 / 性能监测 关。
      必须把 DOM class、ST_ROWS[i].on、滑块位置、读数、--ui-dur、性能浮标
      全部同步一遍：折射纹理里的轨道色和蓝条分界是从 ST_ROWS.on 取的，
      只改 DOM 的话玻璃里透出来的还是改之前那一种。 */
   window.__stRestore = function restoreDefaults() {
-    settings.anim = true; settings.speed = 1.0; settings.fps = false; settings.perf = false;
+    settings.anim = true; settings.speed = 1.0; settings.blur = true;
+    settings.fps = false; settings.perf = false;
     stInit.forEach(([el, on], i) => {
       ST_ROWS[i].on = !!on;
       el.classList.toggle('on', !!on);
@@ -8832,6 +8885,7 @@ function perfSample(renderMs, dtMs) {
     syncSliderPositions();
     syncSpeedEnabled();
     applyUiSpeed();
+    applyMenuBlur();
     applyPerfBadge();
     thumbTexDirty = true;
     saveSettingsIfAny();
@@ -9397,7 +9451,10 @@ const sliderEls = SLIDER_ROWS.map(row => {
    现在改成一个 JS 补间：每帧同时推进 row.on / baseX / fill 宽度，三者同源；
    补间期间加 .jump 关掉 CSS 过渡，避免两套动画打架。 */
 const SL_JUMP_MS = 220;                 // 与 .sl-thumb 的 CSS 过渡时长一致
-const slJump = SLIDER_ROWS.map(() => ({ active: false, from: 0, to: 0, t0: 0 }));
+/* 槽位数同样取 SW_THUMB_N：设置页的倍速滑块是第 5 个控件（索引 4），
+   按 SLIDER_ROWS.length（=4）建的话 slJump[4] 是 undefined，
+   thumbStep 里那句 slJump[i].active 会直接抛错。 */
+const slJump = Array.from({ length: SW_THUMB_N }, () => ({ active: false, from: 0, to: 0, t0: 0 }));
 
 function sliderSetT(i, t) {
   const el = switchEls[i];
@@ -9583,8 +9640,8 @@ let SW_PRESS_GROW = 44 - SW_THUMB_W;
 /* 置 0：最短时长改由上面的时间轴保证（rise+hold 一定走完才沉降），
    不再用 setTimeout 延迟 —— 定时器会在回到主页后照样触发，容易留下残影。 */
 const SW_MIN_PRESS_MS = 0;
-const swPressT0 = SW_Y.map(() => 0);
-const swReleaseTimer = SW_Y.map(() => 0);
+const swPressT0 = Array.from({ length: SW_THUMB_N }, () => 0);
+const swReleaseTimer = Array.from({ length: SW_THUMB_N }, () => 0);
 
 /* ================= 场景几何切换 =================
    开关与滑块共用同一套 thumbStep / 折射纹理 / 玻璃渲染，只有这些尺寸不同。
