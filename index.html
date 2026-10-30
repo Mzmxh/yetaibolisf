@@ -1080,15 +1080,69 @@
     SERVICE_ID : 'PASTE_SERVICE_ID',   // ← 换成你的 EmailJS Service ID
     TEMPLATE_ID: 'PASTE_TEMPLATE_ID'   // ← 换成你的 EmailJS Template ID
   };
-  var TO_EMAIL = 'hyr19328215976@qq.com';
+  /* ── 收件地址 ──────────────────────────────────────────────────────
+     193 是电信号段 => 电信「189 邮箱」= 手机号@189.cn，开启「邮件到达
+     短信提醒」后，有新邮件电信会给手机发一条免费短信，就等于收到通知。
+     这里两个地址一起发：189 走短信，QQ 邮箱兜底（189 万一退信也不丢）。
+     想换个号就改下面这一行；只发一个就删掉另一个。 */
+  var TO_EMAIL = '19328215976@189.cn, hyr19328215976@qq.com';
 
-  if (!NOTIFY.PUBLIC_KEY || !NOTIFY.SERVICE_ID || !NOTIFY.TEMPLATE_ID) return;
-  if (NOTIFY.PUBLIC_KEY.indexOf('PASTE_') === 0) return;   // 未填则不启用
+  /* ── 诊断模式 ──────────────────────────────────────────────────────
+     只有你自己访问「网址后面加 ?notifydebug=1」时才会显示一个黑色小窗，
+     把 EmailJS 返回的状态码和错误原文打出来。
+     访客正常打开时：不创建任何元素、不输出任何内容，和没加一样。
+     ───────────────────────────────────────────────────────────────── */
+  var DEBUG = /[?&]notifydebug=1/.test(location.search) ||
+              /[?&]notifydebug=1/.test(location.hash);
+  var box = null;
+  function log(msg, kind) {
+    if (!DEBUG || !document.body) return;
+    if (!box) {
+      box = document.createElement('div');
+      box.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:99999;max-width:82vw;' +
+        'max-height:60vh;overflow:auto;font:11px/1.55 ui-monospace,Menlo,Consolas,monospace;' +
+        'color:#fff;background:rgba(0,0,0,.84);padding:9px 11px;border-radius:9px;' +
+        'white-space:pre-wrap;word-break:break-all;pointer-events:auto;-webkit-overflow-scrolling:touch';
+      var t = document.createElement('div');
+      t.textContent = '访问通知 · 诊断';
+      t.style.cssText = 'font-weight:700;margin-bottom:5px;color:#FFE28A';
+      box.appendChild(t);
+      var again = document.createElement('div');
+      again.textContent = '［再发一次］';
+      again.style.cssText = 'margin-top:6px;color:#7CC9FF;text-decoration:underline;cursor:pointer';
+      again.addEventListener('click', function () { sent = false; send(); });
+      box.appendChild(again);
+      document.body.appendChild(box);
+    }
+    var line = document.createElement('div');
+    line.style.color = kind === 'ok' ? '#7CFF9B' : (kind === 'err' ? '#FF9A9A' : '#FFE28A');
+    line.textContent = msg;
+    box.insertBefore(line, box.lastChild);
+  }
 
   var sent = false;   // 只发一次：load 触发后 4s 兜底定时器不再重复发
+
+  var missing = [];
+  if (!NOTIFY.PUBLIC_KEY  || NOTIFY.PUBLIC_KEY.indexOf('PASTE_')  === 0) missing.push('PUBLIC_KEY (Account→API Keys)');
+  if (!NOTIFY.SERVICE_ID  || NOTIFY.SERVICE_ID.indexOf('PASTE_')  === 0) missing.push('SERVICE_ID (Email Services)');
+  if (!NOTIFY.TEMPLATE_ID || NOTIFY.TEMPLATE_ID.indexOf('PASTE_') === 0) missing.push('TEMPLATE_ID (Email Templates)');
+  if (missing.length) {
+    log('未启用：这三个还没填', 'err');
+    missing.forEach(function (m) { log('  · ' + m, 'err'); });
+    log('填好真实值、保存、重新部署后，再开本页看结果', 'warn');
+    log('本站 origin = ' + (location.origin || '(未知)'), 'info');
+    log('↑ 这个要加到 EmailJS 后台 Security → Allowed Origins', 'warn');
+    return;
+  }
+  log('本站 origin = ' + (location.origin || '(未知)'), 'info');
+  log('↑ 若收到 403/401，检查它是否已加入 Allowed Origins', 'info');
+  log('收件地址 = ' + TO_EMAIL, 'info');
+  log('↑ 模板的 To email 必须填 {{to_email}}，否则这两个地址不生效', 'warn');
+
   function send() {
     if (sent) return;
     sent = true;
+    log('正在发送…', 'info');
     try {
       var d = new Date();
       var pad = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -1119,8 +1173,19 @@
           }
         }),
         keepalive: true
-      }).catch(function () {});   // 失败不打扰访客
-    } catch (e) {}
+      }).then(function (r) {
+        log('HTTP ' + r.status, r.ok ? 'ok' : 'err');
+        if (r.status === 403 || r.status === 401) {
+          log('→ 多半是 Allowed Origins 没加本站域名，或 Key/授权码不对', 'warn');
+        }
+        return r.text().catch(function () { return ''; });
+      }).then(function (t) {
+        log('响应: ' + (t || '(空)'), 'info');
+      }).catch(function (e) {
+        log('请求发不出去: ' + (e && e.message ? e.message : e), 'err');
+        log('→ 网络拦截 / CORS / 不是 https 页面', 'warn');
+      });
+    } catch (e) { log('异常: ' + e, 'err'); }
   }
 
   // 等首屏稳定（或最多 4 秒）再发，避免和页面资源抢带宽
