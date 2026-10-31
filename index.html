@@ -102,6 +102,47 @@
        移动端直接吃掉十几毫秒。提升成合成层后，位移只改层矩阵、不重画内容。 */
     will-change: transform;
   }
+  /* WebGL 完全不可用时的兜底外观（老设备 / 弱 GPU / 驱动缺失 / 上下文被回收）：
+     玻璃本体是 shader 画的，画不出来时每块玻璃只剩一圈 .glass-shadow ——
+     而它只有 box-shadow、没有背景，看上去就是「元素渲染不出来」。
+     加上 body.no-webgl 后投影层自带半透明填充与描边，元素可见、可点、动画照常。
+     分两步写：先给所有浏览器都能画的半透明填充，再给支持 backdrop-filter 的
+     设备叠一层真模糊（安卓 8.1 的 WebView 不支持，会自动留在上一层）。 */
+  body.no-webgl .glass-shadow {
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.30);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.30),
+                inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+  @supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+    body.no-webgl .glass-shadow {
+      background: rgba(255, 255, 255, 0.10);
+      -webkit-backdrop-filter: blur(12px) saturate(1.35);
+      backdrop-filter: blur(12px) saturate(1.35);
+    }
+  }
+  /* 开关 / 滑块 / 标签栏 / 设置里那块「浮起的玻璃」：它的投影层 class 是
+     .thumb-shadow（不是 .glass-shadow），而且真实玻璃画在 #thumb-glass-canvas
+     —— z-index 6，压在 DOM 白块之上（「白点浮起变玻璃」就是要盖住白点）。
+     所以兜底块也必须提到 6：留在原来的 z-index 2 会被 z-index 3 的 DOM
+     控件（轨道 / 白点 / 标签条）整个盖住，等于这块兜底根本没生效。
+     模糊刻意比上面那层轻：这里要的是「透过玻璃看到下面的轨道」，糊太狠
+     反而把下面的元素抹掉。 */
+  body.no-webgl .thumb-shadow {
+    z-index: 6;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.32);
+    /* JS 每帧写内联 box-shadow（浮得越高越柔），内联优先级高于这里 ——
+       兜底时这一层是「玻璃」不是「投影」，投影盖在 DOM 上会把轨道压暗，强制清掉。 */
+    box-shadow: none !important;
+  }
+  @supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+    body.no-webgl .thumb-shadow {
+      background: rgba(255, 255, 255, 0.12);
+      -webkit-backdrop-filter: blur(6px) saturate(1.25);
+      backdrop-filter: blur(6px) saturate(1.25);
+    }
+  }
   #glass-canvas {
     position: absolute; inset: 0;
     width: 390px; height: 844px;
@@ -1073,6 +1114,9 @@
    · 全程无界面提示、无弹窗、无 console 输出，发送失败也静默吞掉
    · 下面三个 Key 任一为空 => 整个功能自动关闭，连请求都不发
    · 延迟到首屏稳定后再发，不占用加载带宽、不影响页面性能
+   ★ 当前状态：已关闭（下面 NOTIFY_ENABLED = false）
+     要重新开启，只要把那个 false 改成 true —— 三个 Key、收件地址、
+     模板配置全部原封不动保留着，不需要重新配置任何东西。
    ───────────────────────────────────────────────────────────────────── */
 (function () {
   var NOTIFY = {
@@ -1121,6 +1165,18 @@
     line.style.color = kind === 'ok' ? '#7CFF9B' : (kind === 'err' ? '#FF9A9A' : '#FFE28A');
     line.textContent = msg;
     box.insertBefore(line, box.lastChild);
+  }
+
+  /* ── 总开关 ──────────────────────────────────────────────────────────
+     关闭时不发任何请求、不建任何元素，访客完全无感。
+     重新开启：把下面这行的 false 改成 true 即可 —— 三个 Key、收件地址
+     都原样留着，不用重新配置。 */
+  var NOTIFY_ENABLED = false;
+  if (!NOTIFY_ENABLED) {
+    log('已关闭：NOTIFY_ENABLED = false', 'err');
+    log('（三个 Key、收件地址、模板都原样保留着）', 'info');
+    log('要重新开启：把这行的 false 改成 true，重新部署即可', 'warn');
+    return;
   }
 
   var sent = false;   // 只发一次：load 触发后 4s 兜底定时器不再重复发
@@ -8187,29 +8243,34 @@ function thumbStep(dt) {
     }
   }
   unbindRowGeo();
-  // 没有 WebGL 时弹簧照跑（状态机保持一致），用 CSS 模拟「浮起」：
-  // 白点保持不透明（淡出后底下是空的，反而不如留着），靠放大 + 阴影加深表现抬起。
+  /* 没有 WebGL 时弹簧照跑（状态机保持一致）。
+     原来这里「白点保持不透明、只靠放大 + 阴影加深表现抬起」，并把 .thumb-shadow
+     强制 opacity:0 藏起来 —— 那时它只是一圈阴影，底下没有东西，留着白点是对的。
+     现在 no-webgl 下 .thumb-shadow 本身就是「玻璃」（CSS 填充 + 描边，z-index 6
+     压在白点之上），所以反过来做：白点随浮起淡出、玻璃随浮起淡入，视觉上就是
+     「白点变成玻璃」，与有 WebGL 时一致。
+     不再 return —— 玻璃的位置 / 尺寸 / 透明度在下面统一的循环里写，那段不碰 GL。 */
   if (!tRenderer) {
     for (let i = 0; i < thumbEls.length && i < swThumbs.length; i++) {
       const el = thumbEls[i], th = swThumbs[i];
       const lf = Math.max(0, Math.min(1, th.lift));
       // 宽度同样由 grow 驱动（这一段在 thumbStep 前面已算好），无 WebGL 也要一致
       el.style.width = th.grow > 0.0005 ? (SW_THUMB_W + SW_PRESS_GROW * th.grow).toFixed(2) + 'px' : '';
-      el.style.opacity = '';
+      el.style.opacity = (1 - lf).toFixed(3);
       el.style.boxShadow = '0 ' + (2 + lf * 7).toFixed(1) + 'px '
                          + (4 + lf * 9).toFixed(1) + 'px rgba(0,0,0,' + (0.18 + lf * 0.12).toFixed(2) + ')';
-      const sh = thumbShadowEls[i];
-      if (sh) sh.style.opacity = '0';
     }
-    return;
   }
   const phoneEl = document.querySelector('.phone');
   const pr = phoneEl.getBoundingClientRect();
   const k = PHONE_W / pr.width;              // 视口 px → 手机内部 CSS px
-  showThumbGlass();                          // 这一帧要画，先回到合成里
-  tRenderer.setClearColor(0x000000, 0);
-  tRenderer.clear();
-  thumbGlassCleared = false;        // 这一帧真的画了内容，下次不画时要重新清
+  /* 无 WebGL 时下面这些 GL 调用全部跳过（tRenderer 为 null），只走几何计算。 */
+  if (tRenderer) {
+    showThumbGlass();                        // 这一帧要画，先回到合成里
+    tRenderer.setClearColor(0x000000, 0);
+    tRenderer.clear();
+    thumbGlassCleared = false;      // 这一帧真的画了内容，下次不画时要重新清
+  }
   /* 先把 4 个滑块的矩形一次读完，再进绘制循环。
      原来是在循环里边读边写（写完 opacity / 投影立刻读下一个矩形），
      每帧触发 4 次强制同步重排。这里读、写分两趟，整帧只剩 1 次重排。 */
@@ -8406,8 +8467,10 @@ function thumbStep(dt) {
        纯缓存，不参与渲染。 */
     th._gx = fx; th._gy = fy; th._gw = fw; th._gh = fh; th._gvis = glassVis;
     // 放大只跟 grow（后段才变大），不跟 lf —— 否则又变成"一边升一边变大"
-    setThumbUniforms(fx, fy, fw, fh, glassVis);
-    try {
+    /* 无 WebGL 时 uniform / 裁剪框 / draw call 全部跳过：几何与 .thumb-shadow
+       上面已经写完，这里再碰 tRenderer 就是 null 引用。 */
+    if (tRenderer) setThumbUniforms(fx, fy, fw, fh, glassVis);
+    if (tRenderer) try {
       const cxD = fx * SCALE, cyD = H - fy * SCALE;
       // 裁剪框必须比放大后的玻璃更大：按住时滑块 58px × 浮起 1.36 ≈ 79 > 轨道宽 51，
       // 会明显伸出轨道（iOS 原生行为），裁剪框留 1.6 倍的余量。
@@ -8419,8 +8482,8 @@ function thumbStep(dt) {
                            Math.min(H, Math.ceil(sh2 + pad * 2)));
       tRenderer.setScissorTest(true);
     } catch (e) {}
-    tRenderer.render(tScene, tCamera);
-    try { tRenderer.setScissorTest(false); } catch (e) {}
+    if (tRenderer) tRenderer.render(tScene, tCamera);
+    if (tRenderer) try { tRenderer.setScissorTest(false); } catch (e) {}
   }
   unbindRowGeo();
 }
@@ -10352,15 +10415,43 @@ window.addEventListener('resize', fitStage);
    弹簧、形变、光斑、翻页动画全部停摆，只剩一张静态图。这里把渲染单独兜住，
    失败一次就永久降级为「只跑 DOM 动画」，不拖垮交互循环。 */
 let glOK = true;
+/* WebGL 画不出来时整页切到 CSS 兜底外观。玻璃本体由 shader 负责，一旦不可用，
+   每块玻璃就只剩一圈 .glass-shadow —— 它只有 box-shadow、没有背景，页面看着
+   就是「元素渲染不出来」（手表 / 老机 / 驱动缺失 / 上下文被回收都是这个现象）。
+   加上 body.no-webgl 后投影层自带填充与描边：元素可见、可点，弹簧与形变照常跑。 */
+function enterNoWebGL(reason) {
+  if (!glOK) return;
+  glOK = false;
+  document.body.classList.add('no-webgl');
+  console.warn('[liquid-glass] WebGL 不可用，已切换为 CSS 兜底外观：', reason);
+}
+/* 主页玻璃与滑块玻璃各占一个 WebGL 上下文，加上主场景一共三个。弱设备能同时
+   持有的上下文有限，一次开三个容易被浏览器回收 —— 改成第一次真要画时才建。
+   两块都已有 `if (!mRenderer) return` / `if (!tRenderer)` 的守卫，晚建不会出错。 */
+let _menuGlassEl = null, _thumbGlassEl = null;
+let _menuGlassTried = false, _thumbGlassTried = false;
+function ensureMenuGlass() {
+  if (_menuGlassTried || !_menuGlassEl) return;
+  _menuGlassTried = true;
+  try { initMenuGlass(_menuGlassEl); }
+  catch (e) { console.warn('[liquid-glass] 主页玻璃初始化失败：', e && e.message); }
+}
+function ensureThumbGlass() {
+  if (_thumbGlassTried || !_thumbGlassEl) return;
+  _thumbGlassTried = true;
+  try { initThumbGlass(_thumbGlassEl); }
+  catch (e) { console.warn('[liquid-glass] 滑块玻璃初始化失败：', e && e.message); }
+}
 function safeRender() {
   if (!glOK) return;
   try { render(); }
-  catch (e) { glOK = false; console.warn('[liquid-glass] WebGL 渲染不可用，已降级为 DOM 动画：', e && e.message); }
+  catch (e) { enterNoWebGL(e && e.message); }
 }
 function safeRenderMenu() {
   if (!glOK) return;
+  ensureMenuGlass();
   try { renderMenuGlass(); }
-  catch (e) { glOK = false; console.warn('[liquid-glass] 主页玻璃渲染不可用，已降级：', e && e.message); }
+  catch (e) { enterNoWebGL(e && e.message); }
 }
 
 /* ================= 首屏加载提示 ================= */
@@ -10379,14 +10470,19 @@ window.addEventListener('load', () => {
   // 初始化也要兜住：原来 initThreeJS 里 new WebGLRenderer 一抛错，整个 load 回调
   // 就断在这里，下面的 loop 从来没被启动 —— 页面变成一张完全不动的静态图。
   try { initThreeJS(canvas); }
-  catch (e) { glOK = false; console.warn('[liquid-glass] WebGL 初始化失败，已降级为 DOM 动画：', e && e.message); }
+  catch (e) { enterNoWebGL(e && e.message); }
+  /* 弱设备上浏览器会主动回收 WebGL 上下文（内存吃紧 / 切后台）。回收之后所有
+     GL 调用静默失效、不抛错 —— 上面的 try/catch 永远等不到，画面停住或直接变黑。
+     监听事件后主动切兜底：宁可见到 CSS 玻璃，也不要一张空画面。 */
+  canvas.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault();
+    enterNoWebGL('webglcontextlost');
+  }, false);
   setDefaultBackground();
   fabGlass = makeGlass(8, '', 350, 60, 40, 40, { color: '#0f2233', strength: 30 }, 0.50, true);
   menuBgTex = createMenuBgTexture();
-  try { initMenuGlass(document.getElementById('menu-glass-canvas')); }
-  catch (e) { console.warn('[liquid-glass] 主页玻璃初始化失败：', e && e.message); }
-  try { initThumbGlass(document.getElementById('thumb-glass-canvas')); }
-  catch (e) { console.warn('[liquid-glass] 滑块玻璃初始化失败：', e && e.message); }
+  _menuGlassEl  = document.getElementById('menu-glass-canvas');
+  _thumbGlassEl = document.getElementById('thumb-glass-canvas');
   applySwGeometry('switches');   // 初始化几何 / swRows（默认按开关场景）
   syncLabels();
   fitStage();
@@ -10428,6 +10524,9 @@ window.addEventListener('load', () => {
     safeRender();
     _perfRenderMs = (settings.fps || settings.perf) ? (performance.now() - _pT0) : 0;
     fabStep(dt);          // 主页圆形按钮：拖尾 + 果冻 + 内透光（与场景同一套常量）
+    /* 滑块 / 标签栏玻璃按需建上下文（见 ensureThumbGlass）：这四个场景才用得到 */
+    if (sceneMode === 'switches' || sceneMode === 'slider'
+        || sceneMode === 'tabbar' || sceneMode === 'settings') ensureThumbGlass();
     thumbStep(dt);        // 开关滑块：白点浮起变玻璃 / 松手沉下
     /* 标签栏的弹起倍率是本帧 thumbStep 里算出来的，而 syncLabels 在它之前跑 ——
        DOM 侧的 scale 会慢玻璃整整一帧：低帧率下实测 .tbar 是 1.0479、
