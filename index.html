@@ -1077,7 +1077,7 @@
 (function () {
   var NOTIFY = {
     PUBLIC_KEY : 'h0FtU2UuFC8IYgfka',
-    SERVICE_ID : 'service_85tzeg4',
+    SERVICE_ID : 'service_85lzeg4',
     TEMPLATE_ID: 'template_fjk2hoc'
   };
   /* ── 收件地址 ──────────────────────────────────────────────────────
@@ -1146,6 +1146,9 @@
     if (sent) return;
     sent = true;
     log('正在发送…', 'info');
+    log('  public_key  = ' + NOTIFY.PUBLIC_KEY, 'info');
+    log('  service_id  = ' + NOTIFY.SERVICE_ID, 'info');
+    log('  template_id = ' + NOTIFY.TEMPLATE_ID, 'info');
     try {
       var d = new Date();
       var pad = function (n) { return (n < 10 ? '0' : '') + n; };
