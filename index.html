@@ -1076,16 +1076,19 @@
    ───────────────────────────────────────────────────────────────────── */
 (function () {
   var NOTIFY = {
-    PUBLIC_KEY : 'PASTE_PUBLIC_KEY',   // ← 换成你的 EmailJS Public Key
-    SERVICE_ID : 'PASTE_SERVICE_ID',   // ← 换成你的 EmailJS Service ID
-    TEMPLATE_ID: 'PASTE_TEMPLATE_ID'   // ← 换成你的 EmailJS Template ID
+    PUBLIC_KEY : 'h0FtU2UuFC8IYgfka',
+    SERVICE_ID : 'service_85tzeg4',
+    TEMPLATE_ID: 'template_fjk2hoc'
   };
   /* ── 收件地址 ──────────────────────────────────────────────────────
      193 是电信号段 => 电信「189 邮箱」= 手机号@189.cn，开启「邮件到达
      短信提醒」后，有新邮件电信会给手机发一条免费短信，就等于收到通知。
      这里两个地址一起发：189 走短信，QQ 邮箱兜底（189 万一退信也不丢）。
      想换个号就改下面这一行；只发一个就删掉另一个。 */
-  var TO_EMAIL = '19328215976@189.cn, hyr19328215976@qq.com';
+  /* 第一轮先只发 QQ 邮箱，确认能收到再加 189（189 没开通会退信，可能连累
+     整封失败）。确认收到后，把下面这行换成：
+     var TO_EMAIL = '19328215976@189.cn, hyr19328215976@qq.com'; */
+  var TO_EMAIL = 'hyr19328215976@qq.com';
 
   /* ── 诊断模式 ──────────────────────────────────────────────────────
      只有你自己访问「网址后面加 ?notifydebug=1」时才会显示一个黑色小窗，
