@@ -128,7 +128,11 @@
      控件（轨道 / 白点 / 标签条）整个盖住，等于这块兜底根本没生效。
      模糊刻意比上面那层轻：这里要的是「透过玻璃看到下面的轨道」，糊太狠
      反而把下面的元素抹掉。 */
-  body.no-webgl .thumb-shadow {
+  /* 浮起玻璃的 WebGL 上下文被浏览器单独回收时（见 ensureThumbGlass 里的
+     webglcontextlost）只加 no-webgl-thumb：主场景还活着，不该把整站拽进兜底。
+     规则与上面完全一致，只是作用域只剩这一块玻璃。 */
+  body.no-webgl .thumb-shadow,
+  body.no-webgl-thumb .thumb-shadow {
     z-index: 6;
     /* 刻意**不用** backdrop-filter：它作用于这层底下的**所有**像素，会把轨道 /
        白点一起糊掉 —— 正是「透过浮起的玻璃，背面的东西看不见了」。
@@ -676,10 +680,13 @@
   /* 联网开关卡：与媒体卡同款的大圆角玻璃，里面 2×2 排四个小圆按钮。
      按钮本体不是玻璃（参考图上它们是卡片内部的小图标），所以只用半透明白底
      描出圆形，开启态再叠系统色 —— 玻璃材质由底下那一整块卡片提供。 */
-  /* padding / gap 越大 → 四个彩色圆越小。当前 16 / 12：圆直径约 58（卡片 160）。 */
-  .cc-ico.cc-conn-box { padding: 16px; }
+  /* padding / gap 越大 → 四个彩色圆越小。16 / 12：圆直径约 58（卡片 160）；
+     23 / 14：约 50（−14%）。现回调到 19 / 13：约 54.5（比 50 大 +9%，
+     介于两者之间 —— 图标按 44% 同比例跟着变）。
+     只作用于联网卡（.cc-conn-box 仅加在 conn 上），其余控制中心玻璃不受影响。 */
+  .cc-ico.cc-conn-box { padding: 19px; }
   .cc-conn { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
-    gap: 12px; width: 100%; height: 100%; }
+    gap: 13px; width: 100%; height: 100%; }
   .cc-btn { border-radius: 50%; display: flex; align-items: center; justify-content: center;
     background: rgba(255,255,255,.13); box-shadow: inset 0 0 0 1px rgba(255,255,255,.16); }
   .cc-btn svg { width: 44%; height: 44%; }
@@ -1299,13 +1306,13 @@
       <button class="menu-item" id="menuButtonsItem" type="button">玻璃按钮</button>
       <button class="menu-item" id="menuSwitchItem" type="button">开关</button>
       <button class="menu-item" id="menuSliderItem" type="button">玻璃滑块</button>
-      <button class="menu-item" id="menuTabbarItem" type="button">标签栏</button>
+      <button class="menu-item" id="menuTabbarItem" type="button">Dock栏</button>
       <button class="menu-item" id="menuControlItem" type="button">控制中心</button>
       <button class="menu-item" id="menuPasswdItem" type="button">密码输入</button>
       <button class="menu-item" id="menuDialogItem" type="button">玻璃对话框</button>
       <button class="menu-item" id="menuClockItem" type="button">玻璃时钟</button>
       <button class="menu-item" id="menuBlurItem" type="button">模糊</button>
-      <button class="menu-item" id="menuLayoutItem" type="button">自定义布局</button>
+      <button class="menu-item" id="menuLayoutItem" type="button">布局1</button>
 
       <div class="menu-group-title">其他</div>
       <button class="menu-item" id="menuSettingsItem" type="button">设置</button>
@@ -1641,6 +1648,7 @@ const fragmentShader = `
   uniform vec2 glassCenter;
   uniform vec2 glassSize;
   uniform float borderRadius;
+  uniform float cornerSmooth;  // 连续曲率圆角：0 = 标准圆弧（默认，全站一致）；>0 = 超椭圆角
   uniform float shapeMode;     // 0 = 圆角矩形（按钮/开关），1 = 真椭圆（滑块玻璃）
   uniform float refractStrength;
   uniform float dispersion;
@@ -1668,6 +1676,9 @@ const fragmentShader = `
   uniform vec3 tintColor;      // 玻璃染色
   uniform float tintStrength;  // 染色强度 0~1
   uniform float tintMode;      // 0=混色 1=正片叠底 2=滤色
+  /* 玻璃「亮度归一」：x = 目标亮度(0~1)，y = 归一强度(0~1)，z 未用。
+     y = 0 时整段跳过 —— 全站除控制中心外恒为 (0,0,0)，逐值不变。 */
+  uniform vec3 uFlat;
   uniform float bgScale;
   uniform vec2 bgOffset;
   uniform vec2 bgTexSize;
@@ -1752,9 +1763,40 @@ const fragmentShader = `
     return max(d, -min(bb.x, bb.y) * 2.0);
   }
 
+  /* 连续曲率圆角（Apple 那种 squircle 观感）。
+     标准圆角矩形的角是一段正圆弧：圆弧曲率恒为 1/r，直边曲率恒为 0，
+     两者相接处曲率从 0 跳到 1/r —— 那个"折点"就是圆角显得廉价的原因，
+     折射采样点在交界处的切向拉伸也会突变（方形卡片四角"对不齐"的根源）。
+
+     解法：把角部那一段换成超椭圆（|x|^n + |y|^n = r^n）的一角。
+     n > 2 时，超椭圆在两个端点（与直边相接处）的曲率恰好也是 0，
+     与直边曲率连续，然后沿角部平滑增大到最大值 —— 没有折点。
+     cornerSmooth = 0 → n = 2 → 退化成正圆弧，与 roundedRectSDF 完全一致。
+
+     与 ellipseSDF 同一套写法：隐函数值 ÷ 梯度模（一阶泰勒），
+     这样 dist 仍是近似距离，抗锯齿宽度与折射带厚度才不会忽宽忽窄。 */
+  float smoothRectSDF(vec2 p, vec2 b, float r, float s) {
+    vec2 q = abs(p) - b + r;
+    /* 直边段、以及矩形内侧：与标准圆角矩形逐位相同（超椭圆只在角部起作用），
+       直接走原路径，省掉两次 pow，也保证非角部一个像素都不变。 */
+    if (q.x <= 0.0 || q.y <= 0.0) {
+      return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+    }
+    float n = 2.0 + s * 2.0;
+    vec2 pw = pow(max(q, vec2(1e-4)), vec2(n));
+    float sm = pw.x + pw.y;
+    float t = pow(sm, 1.0 / n);                              // 超椭圆"半径"
+    vec2 gr = pow(max(q, vec2(1e-4)), vec2(n - 1.0)) * pow(sm, 1.0 / n - 1.0);
+    return (t - r) / max(length(gr), 1e-5);
+  }
+
   // 统一入口：调用点不用关心当前是哪个形状
   float glassSDF(vec2 p, vec2 b, float r) {
-    return (shapeMode > 0.5) ? ellipseSDF(p, b) : roundedRectSDF(p, b, r);
+    if (shapeMode > 0.5) return ellipseSDF(p, b);
+    /* cornerSmooth 只对控制中心上方两块大方玻璃非 0 —— 其余玻璃走原路径，
+       逐位等于改动前（不进分支、不算 pow）。 */
+    if (cornerSmooth > 0.001) return smoothRectSDF(p, b, r, cornerSmooth);
+    return roundedRectSDF(p, b, r);
   }
 
   /* 文字轮廓的距离场：localPos ∈ [-glassSize/2, glassSize/2] → [0,1] 采样。
@@ -1975,6 +2017,26 @@ const fragmentShader = `
       gl_FragColor = vec4(col, 1.0);
       gl_FragColor.xyz *= 0.95 * (1.0 - bgDim);   // 背景压暗：玻璃透过去看到的也一起暗
       gl_FragColor.xyz = applyTint(gl_FragColor.xyz);
+      /* ===== 亮度归一（只有控制中心启用，uFlat.y = 0 时全站跳过）=====
+         玻璃是半透明的：染色只有 8%，剩下 92% 的亮度直接来自它背后那块壁纸。
+         壁纸明暗不均时，19 块玻璃就跟着一亮一暗 —— 暗背景上看不出来，
+         换成 iOS 那种高对比壁纸就暴露了。
+         ⚠ 必须在 applyTint **之后**：染色会再改一次亮度，放在它前面归一的话
+         目标值会被后面那 8% 白染色顶高，压不到想要的暗度。
+         ⚠ 方向要分开处理，这是上一版「颜色失真、饱和度过头」的根因：
+           · 提亮（d >= 0）用**加性**：三通道加同一个值，色度差原样保留。
+             若用乘性，暗色的「相对饱和度」会被一起放大 —— 暗蓝提亮后变成
+             鲜艳的蓝，看着就是颜色失真。
+           · 压暗（d < 0）用**乘性**：按比例缩小，不会让暗通道先撞到 0，
+             色相得以保持（加性压暗会把黄压成橙）。 */
+      if (uFlat.y > 0.0) {
+        float fl = dot(gl_FragColor.xyz, vec3(0.299, 0.587, 0.114));
+        float fn = mix(fl, uFlat.x, uFlat.y);
+        float d = fn - fl;
+        gl_FragColor.xyz = clamp(d >= 0.0 ? gl_FragColor.xyz + d
+                                          : gl_FragColor.xyz * (fl > 0.002 ? fn / fl : 1.0),
+                                 0.0, 1.0);
+      }
 
       // ===== 手指内透光：按钮里面跟着手指走的那团光 =====
       // 光晕在 qc > 1 处恒为 0，离手指足够远时整段跳过
@@ -2602,13 +2664,84 @@ glasses[8].refractStrength = 80;
    所以内容取 y 107~613，左右各留 20 边距。
    每一项都是独立一块玻璃：可拖动形变（果冻）、带 6css 高斯模糊（毛玻璃），
    材质与标签栏那套一致（白染色 + blur），所以整屏是同一种液态玻璃。 */
-const CC_TINT = { color: '#ffffff', strength: 24 };
+/* 控制中心玻璃的染色强度：24 → 12。
+   场景特殊在「背景被压暗、玻璃被提亮」这两件事是叠加的：控制中心完全展开时
+   壁纸同时被模糊 16px + 压暗 0.38（CC_BG_BLUR_MAX / CC_DIM_MAX），而玻璃只有
+   染色这一层提亮 —— 于是玻璃比它盖住的背景亮了一大截，看着就是「背景发黑、玻璃发白」。
+   实测（锁定 ccReveal=1，dim 0.38 / bgBlur 16，把 19 块玻璃隐藏后取同一批像素作基准）：
+     玻璃内部平均亮度 / 其覆盖处的背景亮度 / 玻璃外的背景亮度（0~255）
+     24（原值）→ 109.5 / 64.0 / 64.7 —— 比背景亮 45.4，是背景的 1.71 倍
+     16        →  95.8 —— 亮 31.7
+     12        →  88.9 —— 亮 24.8，1.39 倍
+      9        →  83.8 —— 亮 19.7
+      8（采用）→  79.2（19 块中心 60% 区域均值，同口径）：整屏 19 块
+                  （含上方两块大方玻璃）共用这一个值，没有任何一块走例外 —— 即「全部一样暗」
+                  逐块验过：12→8 每块都暗 4.7~8.6，大方组均值 6.73 / 圆胶囊组 6.82，差 0.09
+      6        →  78.6 —— 亮 14.6
+      0        →  68.3 —— 亮  4.3（几乎等于背景，玻璃要靠折射与 rim 才看得见）
+   顶栏两个按钮、底部「选择图片」不是 control 玻璃，天然够不到这个常量。
+   顺带一个反直觉的结果：染色越淡，玻璃**内部对比反而越高**（std 54.9 → 62.4）——
+   白染色会把折射产生的明暗一起抹平，减淡之后折射与色散更清楚，图标也更清晰
+   （图标是白色，玻璃越暗白图标对比越强）。
+   想再暗/再亮就改 strength：每减 3 大约暗 5 个亮度单位。
+   数值参考： 24 → 106.2   8 → 79.2   5 → 约 74   0 → 68.3（几乎等于背景）
+   ⚠ 2026-10-31 用户要求「控制中心玻璃再暗一点，背景模糊与压暗不动」：8 → 5。
+     只改这一个常量；CC_BG_BLUR_MAX(16)、CC_GLASS_BLUR_MAX(6)、CC_DIM_MAX(0.38) 均未改。
+     浮起玻璃那几个场景（开关/滑块/标签栏/设置/自定义布局）不走这个常量，不受影响。
+   ⚠ 2026-10-31 再改：白染色 5 实测「几乎看不出变化」（8→5 只暗约 5 个亮度单位）。
+     根因是白染色的方向就是「提亮」—— 减到 0 也只是回到背景亮度（68.3），
+     永远不可能比背景暗。要真的压暗必须换成**暗色染色**：
+       mix(col, #000000, s) = col * (1 - s)  ← 纯乘性，色相与相对饱和度完全保持
+     这也是「不会过饱和」的保证：压暗只会降低或保持通道间的色度差，不会像
+     乘性提亮那样把暗色拉成高饱和。
+     数值（背景压暗后约 67）： 白24→106  白8→82  白0→68  黑12→59  黑18→55
+     取 12：比原来（白8）暗约 23 个亮度单位，比背景再暗约 8，暗得出来但不发死黑。
+     想更暗就加大 strength（18 约再暗 4）；想要回白玻璃就把 color 改回 '#ffffff'。 */
+const CC_TINT = { color: '#000000', strength: 12 };
+/* ===== 控制中心玻璃「亮度归一」=====
+   染色只占 8%，玻璃剩下的亮度几乎全是背后那块壁纸透上来的 —— 壁纸一亮一暗，
+   19 块玻璃就跟着一亮一暗。加大染色解决不了：白染色是**同时**提亮，加得越多越白，
+   反而离「暗」更远。所以这里改为把亮度往一个固定值收：
+     · CC_FLAT_AMT = 归一强度，0 = 关（等于没这功能），1 = 全部拉成同一个亮度；
+     · CC_FLAT_TGT = 目标亮度（0~1，0.22 ≈ 56/255）。
+   ⚠ 压暗与提亮必须分开处理（这是「颜色失真 / 饱和度过头」的根因，改过一次）：
+     · 提亮用**加性**：三通道加同一个值，色度差原样保留。用乘性的话暗色的
+       「相对饱和度」会被一起放大 —— 暗蓝提亮后变成鲜艳的蓝。
+     · 压暗用**乘性**：按比例缩小，暗通道不会先撞到 0，色相保持
+       （加性压暗会把黄压成橙）。
+   数值仿真（19 块，高对比 iOS 风壁纸，dim 0.38 / 白染色 8%，amt 0.75 / tgt 0.22）：
+     亮度极差：基准 0.497 → 归一后 0.124（两版一致，归一效果不变）
+     被提亮的块里，感知饱和度反而升高的：旧（全乘性）4/6  → 新 0/4
+     色度差均值：        基准 0.228 → 旧 0.225（几乎不降） → 新 0.170
+     整体亮度：          旧 0.236~0.360 → 新 0.189~0.314（更暗，因为移到染色之后）
+   代价（如实说明）：加性提亮会让**几乎全黑**的背景区域透出一层中性灰
+   （把黑提到目标亮度必然如此）。想少一点灰雾就调小 TGT，想更一致就调大 AMT。
+   其它场景恒为 (0,0,0)，逐值不变。 */
+/* ⚠⚠ 已关闭：CC_FLAT_AMT = 0 —— 这个「亮度归一」就是「颜色错了」的元凶。
+   归一做的事：不管背后壁纸是亮是暗，都把玻璃的亮度硬拉到 CC_FLAT_TGT 附近。
+   结果玻璃的明暗**与背景脱钩**，高对比壁纸下直接颠倒：
+     背景(玻璃外) 15   25   79  103  147     ← 壁纸由暗到亮
+     玻璃(归一后) 50   53   64   70   79     ← 几乎钉死在 50~79
+     差值        +35  +28  -15  -33  -68     ← 暗处玻璃比背景亮、亮处玻璃比背景暗
+   毛玻璃的物理直觉应该是「玻璃 ≈ 背景 + 一点提亮」。归一把它变成了
+   「背景暗→玻璃发亮、背景亮→玻璃发灰」，所以怎么看怎么"颜色不对"。
+   关掉之后（tint 8，无归一）：
+     背景 15   25   79  103  147
+     玻璃 34   42   89  110  149
+     差值 +19  +17  +10   +7   +2   ← 始终比背景亮一点点，关系正确。
+   保留了全部代码与常量：想重新打开就把下面的 0 改回 0.75（或更小的值如 0.35）。
+   但建议不要开 —— 「不一样暗」的真正来源是**壁纸本身有明暗**，玻璃照实反映它
+   才是对的；靠把亮度压平来求一致，代价就是颜色失真。 */
+const CC_FLAT_AMT = 0;
+const CC_FLAT_TGT = 0.22;
 const CC_BLUR = 6;                       // css px：控制中心玻璃的毛玻璃模糊（原值）
 /* 「玻璃后面」糊不糊，全看 setGlassUniforms 里的 blurPx（= max(glass.blur, bgBlur)），
    而玻璃的折射采样源就是 tDiffuse —— 之前把控制中心这块强行取 0，等于玻璃后面也没了模糊。
    现在与壁纸模糊共用同一个自变量 ccReveal：完全展开 → CC_GLASS_BLUR_MAX，上滑收起 → 渐归于 0，
    与 uAlpha 淡出天然同步。折射 / 色散 / 边缘 rim / 染色均不受影响（只动模糊这一项）。 */
-const CC_GLASS_BLUR_MAX  = 6;   // 完全展开时「玻璃后面」的模糊半径
+const CC_GLASS_BLUR_MAX  = 11;  // 完全展开时「玻璃后面」的模糊半径
+                                // （2026-10-31 用户要求：与壁纸模糊 CC_BG_BLUR_MAX 同强度，原为 6；
+                                //  同日再要求「减弱三分之一」：16 × 2/3 = 10.67 → 取 11）
 const CC_GLASS_BLUR_STEP_G = 3; // 量化档距：0/3/6 共 3 档（档数越少，进入场景时生成越少）
 const CC_GLASS_BLUR_ON  = true; // 总开关：false = 玻璃模糊不跟随出场（退回 CC_BLUR 常量）
 function ccGlassBlurPx() {
@@ -2627,8 +2760,10 @@ function ccGlassBlurPx() {
    ② 档位要留一段时间再回收 —— refreshBlurTextures 每帧 dispose 不在 need 里的档位，
       只留当前这一档会让来回滑动反复重建；维护 ccBlurRecent（最近 6 档）复用。
    控制中心以外：ccBgBlurPx() 直接返回 bgBlur。 */
-const CC_BG_BLUR_MAX  = 16;   // 完全展开时壁纸的模糊半径
-const CC_BG_BLUR_STEP = 8;    // 量化档距：0/8/16 共 3 档（档数越少，首次生成越少）
+const CC_BG_BLUR_MAX  = 11;    // 完全展开时壁纸的模糊半径
+                               // （2026-10-31 用户要求「减弱三分之一」：16 × 2/3 = 10.67 → 取 11）
+const CC_BG_BLUR_STEP = 5.5;   // 量化档距：0/6/11 共 3 档（档数不变，只是整体缩放；
+                               //  取 5.5 = MAX/2 保证 p=1 时精确落在 11，不会被舍到 8 或 12）
 const ccBlurRecent = [];
 let CC_BG_BLUR_ON = true;    // 总开关：false = 关闭"壁纸随出场模糊"（退回旧行为）
 function ccBgBlurPx() {
@@ -2643,7 +2778,9 @@ function ccBgBlurPx() {
    所以「壁纸变暗」与「玻璃里透出的背景变暗」是同一次赋值、天然同步，正是系统控制中心的行为。
    DOM 图标层不在 shader 里，不受影响 → 控件保持高亮可读。
    控制中心以外：ccDimAmt() 直接返回 bgDim。 */
-const CC_DIM_MAX = 0.38;      // 完全展开时的压暗量（iOS 大约 0.35~0.5）
+const CC_DIM_MAX = 0.22;      // 完全展开时的压暗量（2026-10-31 用户要求背景放亮：0.38 → 0.22）
+                              // 0.38 → 0.22：背景亮度 ×0.62 → ×0.78，提亮约 26%。仍低于 iOS 的 0.35~0.5，
+                              // 但配合已改为暗色染色(黑 12%)的玻璃，层次仍然清楚。
 let CC_DIM_ON = true;         // 总开关：false = 关闭压暗（退回旧行为）
 function ccDimAmt() {
   if (!ccSheetOn() || !CC_DIM_ON) return bgDim;     // 其余场景：与改动前完全相同
@@ -2668,15 +2805,63 @@ const CC_BAR_X_L = (CC_COL_X[0] + CC_COL_X[1]) / 2;    // 左半屏两列的中�
 /* 联网开关卡：占列 0~1、行 0~1 —— 与右侧媒体卡同款的圆角大玻璃。
    参考图上左上角那 4 个圆不是独立玻璃，是这块卡片里面的小按钮（DOM 画）。
    宽 = 直径 + 列间距 = 73.3 + 86.6 = 159.9，高 = 直径 + 行间距 = 73.3 + 87.3 = 160.6，
-   圆角 32 与媒体卡一致。 */
+   圆角 40 与媒体卡一致（CC_SQ_R）。 */
 /* 方形卡片专用：圆角 / 折射带厚度 / 衰减指数。只作用于 conn 与 media 两块。 */
-const CC_SQ_R    = 44;
+const CC_SQ_R    = 48;
+/* 连续曲率圆角：0 = 标准圆弧；CC_SQ_SMOOTH 越大角越「方」（n = 2 + 2×s）。
+   这两块方卡片原来是**被迫**把 r 从 32 加到 44 的：正圆弧与直边相接处曲率从 0
+   跳到 1/r，折射采样点的切向拉伸在那一点突变，四角就「对不齐」，只能靠加大 r
+   把突变摊薄 —— 代价正是「圆角看着廉价、怪怪的」。
+   改成连续曲率后，角部曲率从 0 平滑增大，突变本身没了，r 不必再被撑大。
+   当前 48 / 0.20：n = 2.4。落在「太尖 40/n=3」与「太圆 54/n=2.15」正中间：
+   实测角部比 54 版往里收 18 设备px（9 CSS px）、比 40 版往外放 19 设备px，
+   直边仍是零位移。比原版正圆弧（r=44）略圆一点。
+   想调：r 是「圆多大」（调大更圆润），CC_SQ_SMOOTH 是「角多尖」（调小更圆润）。 */
+const CC_SQ_SMOOTH = 0.20;
 /* 折射带厚度 / 衰减：与其余 18 块圆按钮**完全一致**（默认值 0.32 / 2.0）。
    用户要求「别改折射厚度」—— 之前为消四角割裂把 ew 改到 0.62、bend 改到 1.5，
    等于把这两块的折射带加宽一倍，观感上就成了「折射几乎没有了」，已改回原版。
-   四角那道割裂线只剩圆角 r 这一个手段（32 → 56）来化解。 */
+   四角那道割裂线现在由 CC_SQ_SMOOTH 化解，不再靠加大 r。 */
 const CC_SQ_EW   = 0.32;
 const CC_SQ_BEND = 2.0;
+/* 上面那两块大方玻璃（conn / media）：折射强度也要**显式钉死**在 REFRACT，
+   否则下面给其余 17 块调厚时会连带把默认 rf 一起带走（makeGlass 的默认值就是 REFRACT）。 */
+const CC_SQ_RF   = REFRACT;
+/* ===== 其余 17 块（正圆 / 胶囊）专用：折射带「加厚」 =====
+   「厚」= 折射带从边缘往里伸多深（edgeWidth × 半短边），「强」= 背景被拉多远
+   （refractStrength × 半短边 × 0.01）。这两个是**独立的两维**：
+     · 只加厚（rf 不动）→ 同一份位移摊到更宽的一圈上，梯度变缓，看着就「平、没力」；
+     · 所以加厚必须**同时加 rf**，把梯度补回来 —— 沿半径的位移梯度峰值 ∝ rf × bend / ew。
+   实测（73.3 的圆形玻璃，流体背景，折射开/关逐像素对比 + 径向剖面）：
+     ew 0.32 / rf  80（原版）→ 带深 9.0 CSS、覆盖率 23.5%、平均差 12.6
+     ew 0.50 / rf 110（上一版）→ 折射环只到 0.6R（从边缘往里 ~0.4R）
+     ew 0.62 / rf 138（现在）  → 折射环推进到 0.5R（往里 ~0.5R），带厚 +24%
+       径向剖面（中心→边缘，与「折射关闭」的差）：
+         0.5R: 1.0 → 1.9   0.6R: 3.6 → 4.9   0.7R: 7.1 → 7.7
+       即原版最外那一圈不动，多出来的厚度全在 0.5R~0.7R 这一段——
+       玻璃边缘那一圈被拉扯的背景明显变宽，中心区（有图标）不受影响。
+   rf 同步 +25%：梯度峰值 ∝ rf × bend / ew，220 → 222.6，**几乎不变** ——
+   加的是「厚」，不是「猛」，不会变成边缘发毛的一块。
+   想再厚/再强就改这两个常量；只改 ew 不改 rf 会「变厚但变虚」。
+
+   ===== 之后用户嫌 138 太猛，只要「厚」不要「猛」 → rf 138 降到 115 =====
+   厚度（ew 0.62）**不动**，只减强度 —— 带子照样伸到 0.5R，但背景被拉的距离小了。
+   实测（同一块 rot 圆玻璃，与「折射关闭」逐像素对比，半径分 10 档）：
+     rf 138 → 平均差 10.70，剖面峰值 15.70（在 0.4R）
+     rf 125 → 平均差  9.77（−8.7%），峰值 13.92
+     rf 115 → 平均差  8.99（−16%），峰值 12.43（−21%）  ← 采用
+     rf 105 → 平均差  8.16（−24%），峰值 10.78
+   梯度峰值 ∝ rf / ew：138/0.62 = 222.6 → 115/0.62 = 185.5（−16.7%）。
+   中心三档（0.0~0.2R，图标所在）几乎不动（1.02/0.93/1.22），
+   减的全是 0.3R 往外那圈 —— 图标不会跟着变虚。 */
+const CC_ROUND_EW = 0.62;   // 折射带厚度（占半短边比例）—— 保持不变
+/* 折射强度：138 → 115 → 98。用户再次要求「圆形的减弱一点」，厚度 ew 0.62 不动。
+   只减强度、不动厚度 = 带子照样伸到 0.5R，背景被拉的距离再小一档。 */
+const CC_ROUND_RF = 98;     // 折射强度（位移 = 半短边 × rf × 0.01）
+/* 控制中心 19 块玻璃的色散（边缘彩色描边）：默认 16，用户要求关掉 → 0。
+   只作用于 mode === 'control' 的玻璃，其余场景仍用 makeGlass 默认的 16。
+   想恢复彩色描边把这里改回 16 即可。 */
+const CC_DISPERSION = 0;
 const CC_CONN  = { x: 104.9,  y: 199.75, w: 159.9, h: 160.6, r: CC_SQ_R };
 const CC_MEDIA = { x: 279.85, y: 199.75, w: 159.9, h: 160.6, r: CC_SQ_R }; // 媒体卡：占列 2~3、行 0~1
 /* 每块玻璃：[图标名, 中心x, 中心y, 宽, 高, 圆角] —— 圆角省略 = 半短边（正圆/胶囊） */
@@ -2729,15 +2914,24 @@ CC_ITEMS.forEach((it, k) => {
      ① 圆角 r 加大（突变幅度 ∝ offset/r）；② 不改 edgeWidth / edgeBend（那是折射带厚度，改了观感就变）。
      仅对这两块生效。 */
   if (it[0] === 'conn' || it[0] === 'media') {
+    /* 上面两块大方玻璃：用户明确要求不用管 —— 三个参数全部钉在原值。 */
     g.edgeWidth = CC_SQ_EW;
     g.edgeBend  = CC_SQ_BEND;
+    g.refractStrength = CC_SQ_RF;
+    g.cornerSmooth = CC_SQ_SMOOTH;   // 仅这两块：连续曲率圆角，换掉廉价的正圆弧角
+  } else {
+    /* 其余 17 块（正圆 / 胶囊）：折射带加厚 + 强度同步补回。 */
+    g.edgeWidth = CC_ROUND_EW;
+    g.refractStrength = CC_ROUND_RF;
   }
+  g.dispersion = CC_DISPERSION;   // 色散：控制中心单独关闭（其余场景仍是默认 16）
   g.mode = 'control';       // 只在控制中心场景出现，其余场景 hidden
   g.hidden = true;
   glasses.push(g);
 });
-/* 控制中心玻璃的染色比标签栏略低（24% vs 30%）：整屏二十块玻璃铺满，
-   染色高了会互相压成一片白，看不出单块玻璃的折射边缘。 */
+/* 控制中心玻璃的染色比标签栏低（12% vs 30%）：整屏二十块玻璃铺满，
+   染色高了会互相压成一片白，看不出单块玻璃的折射边缘（24 时实测就是"发白"，
+   详见 CC_TINT 处的实测表）。 */
 
 /* 控制中心 = 一整块大玻璃：外观完全不变（19 块照旧各自渲染、各自带折射），变的是交互 —— 拖任何一处整屏一起形变。
    做法：新增不可见的大玻璃 ccSheet 铺满内容区，它是唯一接受拖拽的对象；19 块 draggable=false，
@@ -4048,6 +4242,7 @@ function initThreeJS(canvasEl) {
       glassCenter: { value: new THREE.Vector2(W / 2, H / 2) },
       glassSize: { value: new THREE.Vector2(600, 104) },
       borderRadius: { value: 52 },
+      cornerSmooth: { value: 0 },   // 连续曲率圆角：默认 0（标准圆弧）；只有控制中心上方两块大方玻璃设非零
       shapeMode: { value: 0 },       // 0=圆角矩形（默认）；滑块玻璃在 setThumbUniforms 里切到 1（真椭圆）
       refractStrength: { value: REFRACT },
       dispersion: { value: 16 },
@@ -4075,6 +4270,9 @@ function initThreeJS(canvasEl) {
       blurRadius: { value: 0 },
       drawGlassOnly: { value: 0.0 },
       tintColor: { value: new THREE.Color(1, 1, 1) },
+      /* 玻璃亮度归一（见 shader 的 uFlat）。默认 (0,0,0) = 全站不执行；
+         只有控制中心那 19 块会拿到 (CC_FLAT_TGT, CC_FLAT_AMT, 0)。 */
+      uFlat: { value: new THREE.Vector3(0, 0, 0) },
       tintStrength: { value: 0.0 },
       tintMode: { value: 0.0 },
       jelly: { value: new THREE.Vector4(1, 0, 0, 1) },
@@ -4193,6 +4391,9 @@ function setGlassUniforms(glass) {
   const growS = liftS * pressS;
   u.glassSize.value.set(glass.width * bgScale * growS, glass.height * bgScale * growS);
   u.borderRadius.value = glass.borderRadius * bgScale * growS;
+  /* 共享 uniform：只有控制中心上方两块大方玻璃（conn / media）设了 cornerSmooth，
+     其余玻璃必须**显式写回 0**，否则上一块的非零值会被下一块接着用。 */
+  u.cornerSmooth.value = glass.cornerSmooth || 0;
   /* 玻璃文字：形状取自这块玻璃的距离场纹理（makeTextSDF 烘好的那张）。
      其余玻璃必须**显式写回 0** —— 共享 uniform，上一块的 1 会被下一块接着用。 */
   u.maskMode.value = glass.maskTex ? 1 : 0;
@@ -4274,6 +4475,14 @@ function setGlassUniforms(glass) {
   u.edgeClarity.value = glass.clarity != null ? glass.clarity : 0;
   const tint = glass.tint || DEFAULT_TINT;
   u.tintColor.value.setStyle(tint.color || '#ffffff');
+  /* 亮度归一：只有控制中心那 19 块启用，其余玻璃一律写回 (0,0,0)。
+     ⚠ 与 rimLight 同理 —— 这是共享 uniform，不显式写回会把控制中心的设置
+     泄漏给后面绘制的玻璃，其它页面的明暗就跟着被压平了。 */
+  if (glass.mode === 'control' && CC_FLAT_AMT > 0) {
+    u.uFlat.value.set(CC_FLAT_TGT, CC_FLAT_AMT, 0);
+  } else {
+    u.uFlat.value.set(0, 0, 0);
+  }
   u.tintStrength.value = (tint.strength != null ? tint.strength : 0) / 100;
   u.tintMode.value = TINT_MODES.indexOf(tint.mode || 'mix');
   if (u.tintMode.value < 0) u.tintMode.value = 0;
@@ -6940,6 +7149,7 @@ function setMenuGlassUniforms(g) {
   u.glassCenter.value.set(g.x, H - g.y);
   u.glassSize.value.set(g.width, g.height);
   u.borderRadius.value = g.borderRadius;
+  u.cornerSmooth.value = 0;      // 共享 uniform：菜单预览一律用标准圆弧
   u.refractStrength.value = g.refractStrength;
   u.dispersion.value = g.dispersion;
   u.edgeWidth.value = g.edgeWidth;
@@ -6963,6 +7173,7 @@ function setMenuGlassUniforms(g) {
   u.blurRadius.value = g.blur || 0;
   u.edgeClarity.value = 0;
   u.tintColor.value.setStyle(g.tint.color || '#ffffff');
+  u.uFlat.value.set(0, 0, 0);            // 共享 uniform：菜单预览一律不做亮度归一
   u.tintStrength.value = (g.tint.strength != null ? g.tint.strength : 0) / 100;
   u.tintMode.value = 0;
   // 果冻形变必须用真实状态：之前写死 (1,0,0,0) 等于永远无形变。
@@ -7157,6 +7368,13 @@ const THUMB_SHRINK_AT_FULL = 0.15;
 /* 白点淡出的下限：不再淡到全透明。完全消失就看不到「缩小的滑杆」了，
    参考图里玻璃内部那枚小芯是可见的。保留 0.35 让它成为玻璃里的高光核。 */
 const THUMB_KEEP_ALPHA = 0.35;
+/* 浮起玻璃的最大不透明度：取满 1（完全不透明）。
+   ⚠ 不能改成半透明 —— 那正是「重影」的根因：
+   折射纹理里**已经画了一份轨道**（见 createThumbBgTexture），玻璃若半透明，
+   底下的 DOM 轨道/白点还会再透出 (1-alpha) 一份 —— 两份同位置的画面叠着就是重影。
+   ⚠ 也不能靠「把本体画进纹理」来补 —— 那会在玻璃里留下一块死白的贴纸。
+   隔着玻璃看到的本体就是 DOM 那一颗（keepAlpha 控制它浮起时保留多少）。 */
+const THUMB_GLASS_ALPHA_MAX = 1;
 
 // 白色染色压到 8：18 仍会把折射出来的轨道色洗得很亮，看着还是偏"白点"。
 // 8 只做一点点提亮，主体是玻璃对轨道的折射 —— 开着时透出 systemGreen 的绿玻璃，
@@ -7754,7 +7972,8 @@ function createThumbBgTexture() {
                  补间结束后 amt 恒为 0/1，签名不动 → 不再重画。 */
               + (sceneMode === 'tabbar'
                    ? '|c' + tbarColorAmt.map(a => Math.round(a * 50) / 50).join(',')
-                   : '');
+                   : '')
+                   '';
     if (!fullRedraw && texRowSig[i] === sig) continue;
     texRowSig[i] = sig;
     const r = trackRegion(i);
@@ -7977,6 +8196,9 @@ function createThumbBgTexture() {
       roundPath(ctx, x, yy, w, h, (thCss / 2) * SCALE);   // 胶囊：圆角 = 半高
       ctx.fillStyle = g; ctx.fill();
     }
+    /* ⑤ 本体（白点）不画进纹理 —— 画进去会在玻璃里留下一块死白的「贴纸」，
+       与周围的折射质感对不上（用户反馈「里面有白块」）。
+       隔着玻璃看到的本体就是 DOM 那一颗，由 keepAlpha 控制它在浮起时保留多少。 */
   }
   unbindRowGeo();
   if (!thumbTex) {
@@ -8044,6 +8266,7 @@ function setThumbUniforms(cxCss, cyCss, wCss, hCss, lift) {
   u.glassSize.value.set(wCss * SCALE, hCss * SCALE);
   // 圆角随放大同步：min(宽,高)/2，放大前后都是正圆，不会歪
   u.borderRadius.value = Math.min(wCss, hCss) * 0.5 * SCALE;
+  u.cornerSmooth.value = 0;      // 共享 uniform：浮起玻璃一律用标准圆弧（它是正圆/胶囊，本来就没有直边）
   /* 形状：两个场景都用圆角矩形（r = 半短边 → 胶囊），这是原版。
      曾试着把滑块玻璃改成真椭圆（shapeMode=1），但用户要的是「透过玻璃看到的
      进度条端头圆润」，不是玻璃本身圆润 —— 玻璃改回胶囊，原版。
@@ -8079,6 +8302,7 @@ function setThumbUniforms(cxCss, cyCss, wCss, hCss, lift) {
   u.blurRadius.value = 0;
   u.edgeClarity.value = 0;
   u.tintColor.value.setStyle(thumbParam.tint.color);
+  u.uFlat.value.set(0, 0, 0);            // 共享 uniform：浮起玻璃一律不做亮度归一
   u.tintStrength.value = thumbParam.tint.strength / 100;
   u.tintMode.value = 0;
   // 滑块不做果冻形变：它的形变已经由 iOS 那套「按住变宽」的 CSS 动画表达
@@ -8097,7 +8321,7 @@ function setThumbUniforms(cxCss, cyCss, wCss, hCss, lift) {
   u.glowLens.value = GLOW_LENS;
   u.uTime.value = clockT;
   u.drawGlassOnly.value = 1.0;
-  u.uAlpha.value = Math.max(0, Math.min(1, lift));
+  u.uAlpha.value = Math.max(0, Math.min(1, lift)) * THUMB_GLASS_ALPHA_MAX;
 }
 
 /* 标签栏：整条 toolbar 被选中框「带起来」一点 —— 向前等比放大 TBAR_BOUNCE（不是往上平移）；
@@ -8620,6 +8844,18 @@ function thumbStep(dt) {
        ⚠ 无 WebGL 时必须是 1（完全不淡出）：兜底层只是半透明填充，里面**没有**折射图像，
        白点一淡就等于「玻璃底下什么都没有」—— 表现就是「透过浮起的玻璃，背面的元素消失了」。
        有 WebGL 时玻璃里本身就折射着白点和轨道，所以照旧淡到 THUMB_KEEP_ALPHA。 */
+    /* ⚠ 2026-10-31：不再区分有无 WebGL，一律 1（浮起时本体**完全不淡出**）。
+       根因：折射纹理（createThumbBgTexture）里画的是「背景 + 轨道」，
+       **从来没有画过滑杆本体（白点）**。所以只要有 WebGL，玻璃浮起后不透明度
+       接近 1、且压在白点之上，白点再淡到 0.35 —— 透过玻璃就什么都看不见了，
+       表现正是「透过浮起的玻璃，背面的元素不见了」。
+       无 WebGL 时同理（兜底层只是半透明填充，里面同样没有折射图像）。
+       两条路统一为 1：本体始终可见，透过半透明玻璃看到的那个「小芯」就是它。
+       不采用「把本体画进纹理」的做法 —— 那样 DOM 本体与纹理本体会叠成重影。 */
+    /* 玻璃已改回不透明（THUMB_GLASS_ALPHA_MAX = 1），底下的 DOM 会被完全盖住，
+       所以有 WebGL 时可以放心淡到 THUMB_KEEP_ALPHA —— 淡出只是为了让
+       「白点 → 玻璃」的交接那 0.30 lift 里少一点两层重叠，最终一律看不见。
+       无 WebGL 时必须 1：兜底层只是半透明填充，里面没有折射图像，白点一淡就等于消失。 */
     const keepAlpha = tRenderer ? THUMB_KEEP_ALPHA : 1;
     el.style.opacity = (1 - glassVis * (1 - keepAlpha)).toFixed(3);
     /* 标签栏：整条 toolbar 弹起（等比放大）时，选中框玻璃必须同步放大 ——
@@ -10882,7 +11118,39 @@ function ensureThumbGlass() {
   if (_thumbGlassTried || !_thumbGlassEl) return;
   _thumbGlassTried = true;
   try { initThumbGlass(_thumbGlassEl); }
-  catch (e) { console.warn('[liquid-glass] 滑块玻璃初始化失败：', e && e.message); }
+  catch (e) { console.warn('[liquid-glass] 滑块玻璃初始化失败：', e && e.message); return; }
+  /* 【浮起玻璃的上下文被单独回收 → 底下的元素全都消失】
+     浮起玻璃用的是**第二个** WebGL 上下文（主场景一个、它一个）。弱设备 / 部分
+     安卓 WebView 在内存吃紧或切后台时会回收多出来的上下文，而浏览器回收时
+     **不抛错** —— 之后 clear / render / texSubImage2D 全部静默失效，玻璃一个
+     像素都画不出来；可 tRenderer 仍然非 null，于是：
+       ① keepAlpha 仍取 THUMB_KEEP_ALPHA → 白点照旧淡到 0.35；
+       ② body 上没有 no-webgl → .thumb-shadow 拿不到兜底填充；
+       ③ 玻璃本体又不存在。
+     三者叠加就是「小概率、换台设备偶发一次：透过浮起的玻璃，背面的东西没了」。
+     监听事件后主动把 tRenderer 置空 → 立刻走无 WebGL 兜底（白点保持不透明、
+     .thumb-shadow 拿到 CSS 填充），元素当场可见。 */
+  _thumbGlassEl.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault();
+    tRenderer = null;                 // 先置空：别在已失效的上下文上再调 GL
+    hideThumbGlass();                // 摘掉画布，回收前的最后一帧别留在屏上
+    document.body.classList.add('no-webgl-thumb');
+    console.warn('[liquid-glass] 浮起玻璃的 WebGL 上下文被回收，已切换为 CSS 兜底');
+  }, false);
+  /* 上下文恢复后重建一次，把真玻璃找回来；反复丢就别再试，兜底已经能看。 */
+  let _thumbCtxRestored = 0;
+  _thumbGlassEl.addEventListener('webglcontextrestored', function () {
+    if (_thumbCtxRestored >= 2) return;
+    _thumbCtxRestored++;
+    try {
+      initThumbGlass(_thumbGlassEl);
+      texNeedFull = true; thumbTexDirty = true;   // 新上下文：纹理必须整传一次
+      document.body.classList.remove('no-webgl-thumb');
+    } catch (e) {
+      tRenderer = null;
+      document.body.classList.add('no-webgl-thumb');
+    }
+  }, false);
 }
 function safeRender() {
   if (!glOK) return;
