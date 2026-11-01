@@ -822,6 +822,11 @@
     transition: transform .22s cubic-bezier(.42, .80, .58, 1.0);
     will-change: transform, width;
     pointer-events: none;
+    /* 本体留在玻璃之下（canvas 是 z-index 6，这里不给 z-index）。
+       要的就是「白点变成玻璃」：浮起后本体淡到 THUMB_KEEP_ALPHA = 0，
+       由不透明玻璃接管，玻璃里只剩折射出来的轨道。
+       ⚠ 不要给本体加 z-index 让它浮到玻璃之上 —— 那样会在玻璃中心出现一块
+       半透明白块（本体叠在折射图像上），正是此前反复出现的那个 bug。 */
   }
   .sl.drag .sl-thumb { transition: none; }
   /* 点击轨道跳转期间由 JS 逐帧驱动位置（见 slJumpStep），必须关掉 CSS 过渡，
@@ -910,6 +915,9 @@
     transition: transform var(--sw-tap-dur, .30s) cubic-bezier(.42, .80, .58, 1.2);
     will-change: transform, width;
     pointer-events: none;
+    /* 与 .sl-thumb 同一条：本体留在玻璃之下，不给 z-index。
+       浮起后本体淡到 0，由不透明玻璃接管，玻璃里只折射轨道。
+       给本体加 z-index 浮到玻璃之上会在玻璃中心留一块白 —— 不要加。 */
   }
   .sw.on .sw-thumb { transform: translateX(var(--sw-travel, 18px)); }
   /* 宽度和按住时的位移都由 JS 逐帧写（顺序：先上浮、后变大），所以按住期间必须关掉
@@ -1308,6 +1316,7 @@
       <button class="menu-item" id="menuSliderItem" type="button">玻璃滑块</button>
       <button class="menu-item" id="menuTabbarItem" type="button">Dock栏</button>
       <button class="menu-item" id="menuControlItem" type="button">控制中心</button>
+      <button class="menu-item" id="menuPureCCItem" type="button">无模糊控制中心</button>
       <button class="menu-item" id="menuPasswdItem" type="button">密码输入</button>
       <button class="menu-item" id="menuDialogItem" type="button">玻璃对话框</button>
       <button class="menu-item" id="menuClockItem" type="button">玻璃时钟</button>
@@ -2162,6 +2171,13 @@ let bgScale = 1, bgOffsetX = 0, bgOffsetY = 0;
    只在 setSceneMode 里改这个 flag。 */
 let plainBgMode = false;
 function plainBgOn() { return plainBgMode; }
+/* 「纯玻璃控制中心」场景（sceneMode = 'controlpure'）：与主控制中心完全同一套
+   玻璃 / 布局 / 交互，唯一差别是壁纸模糊、玻璃模糊、压暗、染色全部归零 ——
+   用来单独看玻璃材质本身（折射、色散、圆角形状），不被模糊和明暗干扰。
+   同样用独立 flag 绕开 sceneMode 的 TDZ（见上面 plainBgMode 的说明），
+   只在 setSceneMode 里改。 */
+let pureCCMode = false;
+function ccPureOn() { return pureCCMode; }
 /* ================= 四个玻璃按钮 =================
    尺寸/坐标都是设备像素。胶囊：高 52 CSS（104 设备像素），圆角 = 高/2。 */
 const CX = W / 2;
@@ -2697,7 +2713,7 @@ glasses[8].refractStrength = 80;
      数值（背景压暗后约 67）： 白24→106  白8→82  白0→68  黑12→59  黑18→55
      取 12：比原来（白8）暗约 23 个亮度单位，比背景再暗约 8，暗得出来但不发死黑。
      想更暗就加大 strength（18 约再暗 4）；想要回白玻璃就把 color 改回 '#ffffff'。 */
-const CC_TINT = { color: '#000000', strength: 12 };
+const CC_TINT = { color: '#000000', strength: 0 };
 /* ===== 控制中心玻璃「亮度归一」=====
    染色只占 8%，玻璃剩下的亮度几乎全是背后那块壁纸透上来的 —— 壁纸一亮一暗，
    19 块玻璃就跟着一亮一暗。加大染色解决不了：白染色是**同时**提亮，加得越多越白，
@@ -2747,6 +2763,10 @@ const CC_GLASS_BLUR_ON  = true; // 总开关：false = 玻璃模糊不跟随出�
 function ccGlassBlurPx() {
   // 返回 -1 表示"不接管"，走原来的 max(glass.blur, bgBlur)
   if (!ccSheetOn() || !CC_GLASS_BLUR_ON) return -1;
+  /* 纯玻璃控制中心：接管并置 0。
+     ⚠ 不能返回 -1 —— 那会走 max(glass.blur, bgBlur)，而 glass.blur 是 CC_BLUR = 6，
+       玻璃照样糊一层。返回 0 才是真的没有模糊（全局「背景模糊」滑块仍照常生效）。 */
+  if (ccPureOn()) return 0;
   /* 恒定取最大档，不再随 ccReveal 逐档切换 —— 拖动时每跨一档就要现场生成
      一张全屏模糊纹理（手机上一次几十 ms）。玻璃消失由 uAlpha 淡出负责，
      模糊量不需要跟着变：全程只用 1 张纹理，拖动时零生成。 */
@@ -2768,7 +2788,8 @@ const ccBlurRecent = [];
 let CC_BG_BLUR_ON = true;    // 总开关：false = 关闭"壁纸随出场模糊"（退回旧行为）
 function ccBgBlurPx() {
   const base = Math.round(bgBlur || 0);
-  if (!ccSheetOn() || !CC_BG_BLUR_ON) return base;  // 其余场景：与改动前逐字相同
+  /* 纯玻璃控制中心：壁纸不模糊（退回 base = 全局「背景模糊」滑块的原值）。 */
+  if (!ccSheetOn() || !CC_BG_BLUR_ON || ccPureOn()) return base;  // 其余场景：与改动前逐字相同
   const p = Math.max(0, Math.min(1, ccReveal));
   const q = Math.round(p * CC_BG_BLUR_MAX / CC_BG_BLUR_STEP) * CC_BG_BLUR_STEP;
   return Math.max(base, q);                         // 全局「背景模糊」滑块仍然生效
@@ -2783,7 +2804,8 @@ const CC_DIM_MAX = 0.22;      // 完全展开时的压暗量（2026-10-31 用户
                               // 但配合已改为暗色染色(黑 12%)的玻璃，层次仍然清楚。
 let CC_DIM_ON = true;         // 总开关：false = 关闭压暗（退回旧行为）
 function ccDimAmt() {
-  if (!ccSheetOn() || !CC_DIM_ON) return bgDim;     // 其余场景：与改动前完全相同
+  /* 纯玻璃控制中心：出场压暗归零（退回 bgDim = 深色模式 / 全局设置的原值）。 */
+  if (!ccSheetOn() || !CC_DIM_ON || ccPureOn()) return bgDim;     // 其余场景：与改动前完全相同
   const p = Math.max(0, Math.min(1, ccReveal));
   return Math.max(bgDim, p * CC_DIM_MAX);           // 深色模式仍然叠加生效
 }
@@ -2854,9 +2876,9 @@ const CC_SQ_RF   = REFRACT;
    梯度峰值 ∝ rf / ew：138/0.62 = 222.6 → 115/0.62 = 185.5（−16.7%）。
    中心三档（0.0~0.2R，图标所在）几乎不动（1.02/0.93/1.22），
    减的全是 0.3R 往外那圈 —— 图标不会跟着变虚。 */
-const CC_ROUND_EW = 0.62;   // 折射带厚度（占半短边比例）—— 保持不变
-/* 折射强度：138 → 115 → 98。用户再次要求「圆形的减弱一点」，厚度 ew 0.62 不动。
-   只减强度、不动厚度 = 带子照样伸到 0.5R，背景被拉的距离再小一档。 */
+const CC_ROUND_EW = 0.45;   // 折射带厚度（占半短边比例）—— 0.62 → 0.45（用户要求收窄 27%）
+/* 折射强度：138 → 115 → 98 —— 保持不变，这次只动厚度。
+   只减厚度、不动强度 = 带子变窄，中心平场区变大，边缘的拉扯范围缩小。 */
 const CC_ROUND_RF = 98;     // 折射强度（位移 = 半短边 × rf × 0.01）
 /* 控制中心 19 块玻璃的色散（边缘彩色描边）：默认 16，用户要求关掉 → 0。
    只作用于 mode === 'control' 的玻璃，其余场景仍用 makeGlass 默认的 16。
@@ -3974,7 +3996,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') clockLastCheck = 0;
 });
 
-function ccSheetOn() { return sceneMode === 'control'; }
+function ccSheetOn() { return sceneMode === 'control' || sceneMode === 'controlpure'; }
 
 /* ccSheet 不在 glasses 里 → setSceneMode 的那几个 glasses.forEach 分支一个都碰不到它。
    后果：在控制中心拖到一半就退出，19 块的形变被清了、ccSheet 的没清；下次进场 ccBroadcast 第一帧
@@ -4433,7 +4455,7 @@ function setGlassUniforms(glass) {
      一次收起最多触发 5 次 —— 真机日志里「模糊」单项占到 80~130ms/帧。
      现在：始终采样清晰图，再与**单张**最大模糊图按 p 交叉淡入。
      观感等价于"模糊逐渐加深"，但全程只用到 1 张模糊纹理、拖动时零生成。 */
-  if (ccSheetOn() && CC_BG_BLUR_ON) {
+  if (ccSheetOn() && CC_BG_BLUR_ON && !ccPureOn()) {
     const p = Math.max(0, Math.min(1, ccReveal));
     u.tBackdrop.value = texture;
     u.tBackdropBlur.value = getBgTextureForBlur(CC_BG_BLUR_MAX);
@@ -7366,8 +7388,16 @@ let TEX_TRACK_SHRINK_AT_FULL = 0.28;
 let TEX_TRACK_X_EXT_AT_FULL = 0;
 const THUMB_SHRINK_AT_FULL = 0.15;
 /* 白点淡出的下限：不再淡到全透明。完全消失就看不到「缩小的滑杆」了，
-   参考图里玻璃内部那枚小芯是可见的。保留 0.35 让它成为玻璃里的高光核。 */
-const THUMB_KEEP_ALPHA = 0.35;
+   参考图里玻璃内部那枚小芯是可见的。
+   ⚠ 2026-11-01：0.35 → 0.55。
+   0.35 是在「本体被不透明玻璃完全盖住」的前提下定的 —— 那时本体根本看不见，
+   这个值取多少都无所谓。现在本体已经提到玻璃**之上**（见 .sw-thumb / .sl-thumb
+   的 z-index 7），这个值就直接决定本体看不看得清：0.35 的白叠在折射背景上太淡，
+   要的效果是「白点变成玻璃」：浮起后本体完全淡出（0），由不透明玻璃接管，
+   玻璃里剩下的就是折射出来的轨道 —— 本体本身不该再出现在玻璃里。
+   ⚠ 取值必须是有 WebGL 时 0：本体若保留可见度、或被提到玻璃之上
+   （z-index 7），都会在玻璃中心留下一块半透明白块 —— 那正是此前反复报的 bug。 */
+const THUMB_KEEP_ALPHA = 0;
 /* 浮起玻璃的最大不透明度：取满 1（完全不透明）。
    ⚠ 不能改成半透明 —— 那正是「重影」的根因：
    折射纹理里**已经画了一份轨道**（见 createThumbBgTexture），玻璃若半透明，
@@ -8840,22 +8870,23 @@ function thumbStep(dt) {
     /* 回弹尾段：lift 已经归零、fade 也是 0，但 jel 还在抖 ——
        用 |jel| 撑住一点玻璃 alpha，否则最后那一下回弹根本看不见。 */
     const glassVis = Math.min(1, Math.max(fade, Math.abs(jl) * SW_JELLY_VIS));
-    /* 不再淡到 0：保留 THUMB_KEEP_ALPHA，让缩小后的滑杆本体以「玻璃里的小芯」可见。
-       ⚠ 无 WebGL 时必须是 1（完全不淡出）：兜底层只是半透明填充，里面**没有**折射图像，
-       白点一淡就等于「玻璃底下什么都没有」—— 表现就是「透过浮起的玻璃，背面的元素消失了」。
-       有 WebGL 时玻璃里本身就折射着白点和轨道，所以照旧淡到 THUMB_KEEP_ALPHA。 */
-    /* ⚠ 2026-10-31：不再区分有无 WebGL，一律 1（浮起时本体**完全不淡出**）。
-       根因：折射纹理（createThumbBgTexture）里画的是「背景 + 轨道」，
-       **从来没有画过滑杆本体（白点）**。所以只要有 WebGL，玻璃浮起后不透明度
-       接近 1、且压在白点之上，白点再淡到 0.35 —— 透过玻璃就什么都看不见了，
-       表现正是「透过浮起的玻璃，背面的元素不见了」。
-       无 WebGL 时同理（兜底层只是半透明填充，里面同样没有折射图像）。
-       两条路统一为 1：本体始终可见，透过半透明玻璃看到的那个「小芯」就是它。
-       不采用「把本体画进纹理」的做法 —— 那样 DOM 本体与纹理本体会叠成重影。 */
-    /* 玻璃已改回不透明（THUMB_GLASS_ALPHA_MAX = 1），底下的 DOM 会被完全盖住，
-       所以有 WebGL 时可以放心淡到 THUMB_KEEP_ALPHA —— 淡出只是为了让
-       「白点 → 玻璃」的交接那 0.30 lift 里少一点两层重叠，最终一律看不见。
-       无 WebGL 时必须 1：兜底层只是半透明填充，里面没有折射图像，白点一淡就等于消失。 */
+    /* 不再淡到 0：保留 THUMB_KEEP_ALPHA，让缩小后的滑杆本体可见。
+       ⚠ 2026-11-01 修正：上面几段旧注释的前提是错的 —— 它们写着
+       「有 WebGL 时玻璃里本身就折射着白点和轨道」，但折射纹理（createThumbBgTexture）
+       里画的是「背景 + 轨道」，**从来没有画过滑杆本体（白点）**。
+       于是有 WebGL 时三件事叠加：玻璃 THUMB_GLASS_ALPHA_MAX = 1 完全不透明、
+       canvas z-index 6 压在本体之上、纹理里又没有本体 —— 本体被彻底盖死，
+       表现正是「透过浮起的玻璃，背面的东西消失了」（只有真机有 WebGL 才复现，
+       无 WebGL 时 canvas 不画、兜底层是半透明填充，反倒看得见）。
+       这三个条件**合起来正是「白点变成玻璃」该有的样子** —— 本体淡出、玻璃接管，
+       隔着玻璃看到的就是折射出来的轨道，本体本身不该再出现。
+       所以修法不是「让本体露出来」，而是反过来：本体彻底淡到 0（THUMB_KEEP_ALPHA = 0），
+       本体留在玻璃之下（不加 z-index）。
+       ⚠ 两种「让本体可见」的做法都是错的，都会留白块：
+         ① 给本体 z-index 7 浮到玻璃之上 → 玻璃中心一块半透明白；
+         ② 把本体画进折射纹理 → 玻璃里一块死白贴纸。 */
+    /* 无 WebGL 时必须 1：兜底层只是半透明填充，里面没有折射图像，
+       白点一淡就等于「玻璃底下什么都没有」。 */
     const keepAlpha = tRenderer ? THUMB_KEEP_ALPHA : 1;
     el.style.opacity = (1 - glassVis * (1 - keepAlpha)).toFixed(3);
     /* 标签栏：整条 toolbar 弹起（等比放大）时，选中框玻璃必须同步放大 ——
@@ -9548,6 +9579,10 @@ document.getElementById('menuTabbarItem').addEventListener('click', () => showSc
 // 目录里点「控制中心」→ 同属场景层（背景 / 顶栏 / 选择图片 / 滚动都在），
 // 中间不摆任何控件：switchEls 指向空数组，玻璃只留顶栏两个 + 选择图片。
 document.getElementById('menuControlItem').addEventListener('click', () => showScene('control'));
+// 目录里点「纯玻璃控制中心」→ 与控制中心**完全同一套**（同一批玻璃、同样布局、
+// 同样可拖动收起），唯一差别：壁纸模糊 / 玻璃模糊 / 出场压暗全部归零（见 ccPureOn）。
+// 用途是单独看玻璃材质本身 —— 折射、圆角形状、边缘 rim，不被模糊和明暗盖住。
+document.getElementById('menuPureCCItem').addEventListener('click', () => showScene('controlpure'));
 // 目录里点「密码输入」→ 同属场景层（背景 / 顶栏 / 选择图片都在），中间先留空
 document.getElementById('menuPasswdItem').addEventListener('click', () => showScene('passwd'));
 // 目录里点「玻璃对话框」→ 同属场景层（背景 / 顶栏 / 选择图片都在），中间先留空
@@ -9593,7 +9628,7 @@ function setSceneMode(mode) {
   const tb = (mode === 'tabbar');
   /* 控制中心：场景层照旧（背景、滚动、顶栏两个按钮、底部「选择图片」全都在），
      只是中间不摆任何控件 —— 用来单独看背景与玻璃材质本身。 */
-  const ct = (mode === 'control');
+  const ct = (mode === 'control' || mode === 'controlpure');
   /* 密码输入场景：与控制中心同属「场景层」（背景 / 顶栏 / 选择图片全都在），
      但中间不摆任何控件，也不开整屏大玻璃 ccSheet（ccSheetOn() 只认 control）——
      等于一块干净的场景底板，内容后续往 #passwdPanel 里填。 */
@@ -9629,6 +9664,8 @@ function setSceneMode(mode) {
      位置**不清零**：homeX/homeY 就是拖到的地方，切回来还在那儿（自由摆放的本意）。 */
   if (!ly && layDrag) layDrag = null;
   plainBgMode = st || ab;
+  /* 纯玻璃控制中心：与主控制中心同一套（ct 已包含它），只把模糊 / 压暗归零。 */
+  pureCCMode = (mode === 'controlpure');
   /* 关于页：白底换成「整页文字」那张画布纹理。进页时排版作废重算 ——
      面板宽度 / 内容高度可能变了，缓存的矩形就是旧的。 */
   plainBgAbout = ab;
@@ -11124,7 +11161,7 @@ function ensureThumbGlass() {
      安卓 WebView 在内存吃紧或切后台时会回收多出来的上下文，而浏览器回收时
      **不抛错** —— 之后 clear / render / texSubImage2D 全部静默失效，玻璃一个
      像素都画不出来；可 tRenderer 仍然非 null，于是：
-       ① keepAlpha 仍取 THUMB_KEEP_ALPHA → 白点照旧淡到 0.35；
+       ① keepAlpha 仍取 THUMB_KEEP_ALPHA（有 WebGL 时 = 0）→ 白点照旧淡出；
        ② body 上没有 no-webgl → .thumb-shadow 拿不到兜底填充；
        ③ 玻璃本体又不存在。
      三者叠加就是「小概率、换台设备偶发一次：透过浮起的玻璃，背面的东西没了」。
