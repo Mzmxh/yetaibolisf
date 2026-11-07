@@ -7276,6 +7276,11 @@ function fabStep(dt) {
    所以这块 canvas 覆盖整屏、不做任何裁剪。 */
 let tRenderer = null, tMaterial = null, tScene = null, tCamera = null;
 let thumbTex = null, thumbTexDirty = true;
+/* 纹理内容这一帧没画全（标签栏图标还在等布局稳定）→ 下一帧强制重画整传。 */
+let thumbTexRetry = false;
+/* 浮起开始的那一帧做一次纹理整传：覆盖「首次进场景纹理还停在旧几何」
+   与「局部 texSubImage2D 在部分驱动上错位」这两类偶发空白。 */
+let _prevThumbLiftMax = 0;
 let thumbShadowEls = [], thumbEls = [], trackEls = [];
 /* ---- 折射纹理的「局部上传」----
    整张纹理是 780×1688 = 5.02MB。实测拖动时每帧都要重画 + 上传一次，
@@ -7610,12 +7615,51 @@ function drawTexBand(ctx, src, sx0, sy0, dx, dy, dw, dh, offX, offY) {
    坐标是进场景时量一次 DOM 得到的（纹理坐标 = css × SCALE），
    这样折射出来的影像和 DOM 上真正看见的图标严格重合，不会重影。 */
 let tbarTexItems = null;
+/* 上一次测量的坐标签名：菜单刚关 / 切场景的过渡里，手机框还带着缩放 transform，
+   此刻量到的图标坐标是中间态（实测首帧 ix=265、稳定后 151，差 57 CSS px）。
+   这份错坐标一旦被写进 tbarTexItems，texRowSig 就再也不变、这一行永远不重画，
+   图标被画到玻璃采样区之外 —— 表现正是「首次进去，玻璃里的标签栏不见了」。
+   所以要求连续两次量到完全一致才接受；但**过渡中不能返回 null**（见下）。 */
+let _tbarMeasureSig = null;
+
+/* 不依赖 DOM 测量的静止坐标兜底。
+   ⚠ 这是「拖动浮起时玻璃里的图标整片消失」的根治：
+   createThumbBgTexture 每次重画某一行会先 clearRect 把整行擦掉，再重新画轨道和图标。
+   只要 items 为 null，这一行就只剩轨道 —— 而浮起玻璃完全不透明、又压在 DOM 之上，
+   于是玻璃里一个图标都没有。旧代码在 tbarBounce>0 时直接 `return tbarTexItems`，
+   刚进场景就按住的话缓存还没建立 → 整段拖动里它一直是 null，图标永远画不回来
+   （texRowSig 被清成 '' + thumbTexRetry 每帧置位，只会让这张空图一遍遍整传）。
+   这些坐标全部来自 TBAR_* 布局常量 + 实测静止位置（SCALE=2 时
+   ix=151.31/314/476.66、iy=828/825/828、ty=869），与布局缩放、弹起倍率都无关，
+   任何时刻都能用；文字从 DOM 读，读不到用默认值。 */
+function tbarFallbackItems() {
+  const panel = document.getElementById('tabbarPanel');
+  const spans = panel ? panel.querySelectorAll('.tbar-item span') : [];
+  const defText = ['Today', '游戏', 'App'];
+  const x0 = (TBAR_X - TBAR_W / 2 + TBAR_SEL_PAD_X + TBAR_SEL_W / 2) * SCALE;
+  const step = TBAR_SEL_W * SCALE;
+  const iyCss = [414, 412.5, 414];   // 中间那枚火箭的 SVG 盒比另两个高 1.5css
+  const out = [];
+  for (let j = 0; j < 3; j++) {
+    const cx = x0 + step * j;
+    out.push({ ix: cx, iy: iyCss[j] * SCALE, is: 22 * SCALE,
+               tx: cx, ty: 434.5 * SCALE, fs: 11 * SCALE,
+               text: (spans[j] && spans[j].textContent) || defText[j] });
+  }
+  return out;
+}
+
 function measureTbarTexItems() {
+  const fb = tbarFallbackItems();
   const panel = document.getElementById('tabbarPanel');
   const phone = document.querySelector('.phone-ui');
-  if (!panel || !phone) return null;
+  if (!panel || !phone) return fb;
+  /* 浮起/拖动中：已有静止坐标缓存就直接复用；**没有缓存不能早退** ——
+     下面的 ux/uy 会把 DOM 上的弹起倍率除掉，浮起态量到的同样能还原成静止值。
+     早退会让 tbarTexItems 在整个拖动过程里永远是 null（这正是本 bug）。 */
+  if (tbarBounce > 0.001 && tbarTexItems) return tbarTexItems;
   const base = phone.getBoundingClientRect();
-  if (!base.width) return null;                 // 还没排版（display:none）时量不到
+  if (!base.width) { _tbarMeasureSig = null; return tbarTexItems || fb; }  // 还没排版
   /* 手机框在设计坐标里是 390 宽。实际量到的可能是别的（页面整体缩放、
      或者菜单打开时框被缩小），所以先算出「屏幕像素 → 设计 css」的比例 k，
      再乘 SCALE 得到纹理坐标 —— 这样无论框被怎么缩放，画出来的位置都正确。
@@ -7644,7 +7688,19 @@ function measureTbarTexItems() {
     if (ix < 0 || ix > W || iy < 0 || iy > H) return;    // 量歪了就别画
     out.push({ ix, iy, is, tx, ty, fs: 11 * k * SCALE / bs, text: sp.textContent });
   });
-  tbarTexItems = (out.length === 3) ? out : null;
+  /* 量不全 / 还没收敛：一律返回「已有缓存 → 几何兜底」，绝不返回 null。
+     一次抖动也不把上次量好的缓存清掉，否则纹理下一帧重画时又会变成空条。 */
+  if (out.length !== 3) { _tbarMeasureSig = null; return tbarTexItems || fb; }
+  /* 三个图标的 x/y 是布局是否稳定的判据：过渡中的中间态与稳定值差几十像素，
+     连续两帧一致才落缓存；这两帧里用几何兜底先把图标画上，画面不会空。 */
+  const ms = out.map(o => [o.ix, o.iy, o.is, o.tx, o.ty, o.fs]
+                          .map(v => Math.round(v * 100) / 100).join(',')).join('|');
+  if (ms !== _tbarMeasureSig) { _tbarMeasureSig = ms; return tbarTexItems || fb; }
+  /* 浮起期间即便量到一致也不落缓存：DOM 的 scale 与 tbarBounce 可能差一帧，
+     除出来的「静止坐标」会带一点偏移。落缓存会一直用到下次切场景。
+     用几何兜底即可（实测与静止精确值差 0.02 设备px），松手后静止时再落精确值。 */
+  if (tbarBounce > 0.001) return tbarTexItems || fb;
+  tbarTexItems = out;
   return tbarTexItems;
 }
 /* 按 24×24 的 viewBox 绘制，与 DOM 里那三个 SVG 同一套路径 */
@@ -8133,7 +8189,8 @@ function createThumbBgTexture() {
          只能靠这张纹理提供画面 —— 纹理里没有图标，玻璃下就是一片空白；
          纹理里画成暗影，玻璃下就是一个暗斑（之前 alpha 0.25 深色的版本即如此）。
          画成与 DOM 同样的白色，玻璃内外的图标才能接得上，只有折射带把它推歪。 */
-      const items = (tbarTexItems && tbarTexItems.length) ? tbarTexItems : measureTbarTexItems();
+      const items = (tbarTexItems && tbarTexItems.length) ? tbarTexItems
+                    : (measureTbarTexItems() || tbarFallbackItems());
       if (items) {
         /* 条随浮起缩小（TEX_TRACK_SHRINK_AT_FULL），但**图标与文字不跟着条缩** ——
            它们只跟着「整排弹起」放大（以整排中心为原点），与外面 DOM 那三个图标同一个变换。
@@ -8176,6 +8233,13 @@ function createThumbBgTexture() {
           ctx.fillText(it.text, gx(it.tx), gy(it.ty));
         }
         ctx.restore();
+      } else {
+        /* 图标这一帧没画上（布局还没稳）：这一行不能算「画完了」。
+           清掉签名并置重试位，thumbStep 下一帧会强制重新整传纹理，
+           直到图标真的出现在纹理里为止。否则玻璃不透明、底下 DOM 又被盖住，
+           用户看到的就是一块空玻璃。 */
+        texRowSig[i] = '';
+        thumbTexRetry = true;
       }
       /* ④ 边缘高光（rim）—— 「普通高斯模糊」与「玻璃」的分界，玻璃材质最关键的一笔。
          静态、没有滑块浮起时那条的高光由 shader 画（1038~1047 行）：
@@ -8500,6 +8564,20 @@ function thumbStep(dt) {
   /* 这三个场景里控件集合也可能为空（切场景当帧 switchEls 刚换成空数组），
      下面一趟都不会跑 —— 同样要清，否则停在上一帧。 */
   if (!swRows || swRows.length === 0 || !thumbEls.length) { hideThumbGlass(); return; }
+  /* 【内容保底：所有浮起玻璃场景通用】
+     玻璃是完全不透明、z-index 6 压在 DOM 之上的 —— 透过它能看见什么，
+     100% 取决于折射纹理里那一帧画了什么。首次进场景时纹理可能还停在
+     上一个场景的几何、局部 texSubImage2D 在部分驱动上也会写到错行，
+     于是玻璃里一片空（标签栏图标、滑杆轨道全不见），而玻璃外的 DOM 好好的。
+     浮起这一刻强制整张重画 + 整传一次，之后仍走原来的逐行签名增量更新。 */
+  {
+    let lm = 0;
+    for (const th of swThumbs) if (th.lift > lm) lm = th.lift;
+    if (_prevThumbLiftMax < 0.002 && lm >= 0.002) { thumbTexDirty = true; texNeedFull = true; }
+    _prevThumbLiftMax = lm;
+  }
+  /* 上一帧图标没画全 → 这一帧必须重来（measureTbarTexItems 两帧内收敛）。 */
+  if (thumbTexRetry) { thumbTexDirty = true; texNeedFull = true; thumbTexRetry = false; }
   // ---- 轨道颜色渐变：与 DOM 轨道的 .30s linear 逐帧同步 ----
   if (stepThumbTrackTween(dt)) thumbTexDirty = true;
   /* 本体缩放（grow）在变 → 折射纹理里的轨道尺寸也要跟着变，
@@ -9902,6 +9980,10 @@ function setSceneMode(mode) {
   }
   // 几何换了，折射纹理整张重画（局部重画的区域是按旧尺寸算的）
   thumbTexFull = true; thumbTexDirty = true;
+  /* 布局要重排：上一次测量的坐标签名作废，重新走「两帧一致」确认；
+     浮起检测也归零，保证进场景后第一次浮起仍会触发一次纹理整传保底。 */
+  _tbarMeasureSig = null;
+  _prevThumbLiftMax = 0;
   /* 切场景要立刻同步 DOM 图标层，不能等渲染。
      labelEls / shadowEls 的 display 只在 syncLabels() 里写，而 syncLabels 挂在渲染分支里
      —— 切场景不产生任何弹簧或动画，sceneIdle() 照样判成静止 → 整帧被性能②跳过 → syncLabels 一次都不跑。
@@ -11145,6 +11227,7 @@ function enterNoWebGL(reason) {
    两块都已有 `if (!mRenderer) return` / `if (!tRenderer)` 的守卫，晚建不会出错。 */
 let _menuGlassEl = null, _thumbGlassEl = null;
 let _menuGlassTried = false, _thumbGlassTried = false;
+let _thumbGlassFails = 0;
 function ensureMenuGlass() {
   if (_menuGlassTried || !_menuGlassEl) return;
   _menuGlassTried = true;
@@ -11154,8 +11237,22 @@ function ensureMenuGlass() {
 function ensureThumbGlass() {
   if (_thumbGlassTried || !_thumbGlassEl) return;
   _thumbGlassTried = true;
-  try { initThumbGlass(_thumbGlassEl); }
-  catch (e) { console.warn('[liquid-glass] 滑块玻璃初始化失败：', e && e.message); return; }
+  try {
+    initThumbGlass(_thumbGlassEl);
+    document.body.classList.remove('no-webgl-thumb');
+    _thumbGlassFails = 0;
+  }
+  catch (e) {
+    console.warn('[liquid-glass] 滑块玻璃初始化失败：', e && e.message);
+    /* 这是第二个 WebGL 上下文，弱设备 / 部分 WebView 首次创建会失败。
+       tRenderer 从此恒为 null，但主场景可能还活着 → 页面既没有 body.no-webgl、
+       也没有 no-webgl-thumb，.thumb-shadow 拿不到兜底填充，玻璃既画不出、
+       底下又没有替代层 —— 表现就是「第一次进去，透过玻璃的内容全没了」。
+       补上 class 让兜底立刻生效，并再给两次机会（成功后上面会清掉）。 */
+    document.body.classList.add('no-webgl-thumb');
+    if (++_thumbGlassFails < 3) _thumbGlassTried = false;
+    return;
+  }
   /* 【浮起玻璃的上下文被单独回收 → 底下的元素全都消失】
      浮起玻璃用的是**第二个** WebGL 上下文（主场景一个、它一个）。弱设备 / 部分
      安卓 WebView 在内存吃紧或切后台时会回收多出来的上下文，而浏览器回收时
